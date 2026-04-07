@@ -1,0 +1,3 @@
+# The core scaffold intentionally avoids third-party runtime dependencies.
+# Add pinned Brax, JAX, MuJoCo Playground, and experiment tooling here once
+# the actual training stack is integrated into this repository.
