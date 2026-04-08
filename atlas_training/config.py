@@ -80,6 +80,16 @@ def build_run_id(stage: str, n_step: int, critic_width: int, seed: int) -> str:
     return f"{stage}_n{n_step}_c{critic_width}_seed{seed}"
 
 
+def _normalize_nested_spec(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_nested_spec(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_normalize_nested_spec(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_nested_spec(item) for item in value]
+    return value
+
+
 def checkpoint_signature(
     config: VerticalSliceConfig,
     *,
@@ -98,7 +108,7 @@ def checkpoint_signature(
         "replay_capacity": config.replay_capacity,
     }
     if observation_spec is not None:
-        signature["observation_spec"] = observation_spec
+        signature["observation_spec"] = _normalize_nested_spec(observation_spec)
     if observation_dtype is not None:
         signature["observation_dtype"] = observation_dtype
     return signature

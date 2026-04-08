@@ -51,7 +51,7 @@ class TrainingConfigTest(unittest.TestCase):
         )
         self.assertEqual(signature["batch_size"], 64)
         self.assertEqual(signature["replay_capacity"], 12345)
-        self.assertEqual(signature["observation_spec"], {"state": (48,), "privileged_state": (123,)})
+        self.assertEqual(signature["observation_spec"], {"state": [48], "privileged_state": [123]})
         self.assertEqual(signature["observation_dtype"], "float32")
 
     def test_validate_checkpoint_compatibility_rejects_replay_layout_mismatch(self) -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-import pickle
 import random
 import statistics
 from datetime import datetime, timezone
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import flax
+from flax import serialization as flax_serialization
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -132,7 +132,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
     training_state = _init_training_state(state_key, runtime, config)
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
 
-    training_state, replay_state, env_state, final_metrics, env_steps, replay_size, _collapsed = _run_training_loop(
+    training_state, replay_state, env_state, final_metrics, env_steps, replay_size, warning_triggered, _collapsed = _run_training_loop(
         config=config,
         runtime=runtime,
         train_env=train_env,
@@ -163,6 +163,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
         "final_env_steps": env_steps,
         "final_eval_return_mean": nominal_metrics["return_mean"],
         "final_eval_return_std": nominal_metrics["return_std"],
+        "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
     }
     _write_json(config.summary_path(), summary)
@@ -188,12 +189,16 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     evaluator = _build_evaluator(runtime, eval_env, config.eval_episodes)
 
     key = jax.random.PRNGKey(config.seed)
-    key, env_key = jax.random.split(key)
+    key, env_key, state_key = jax.random.split(key, 3)
     env_state = train_env.reset(jax.random.split(env_key, config.num_envs))
-    training_state = checkpoint_payload["training_state"]
+    training_state = _init_training_state(state_key, runtime, config)
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
-    _validate_replay_state_compatibility(replay_state, checkpoint_payload["replay_state"])
-    replay_state = checkpoint_payload["replay_state"]
+    training_state = _tree_to_jax(
+        flax_serialization.from_state_dict(training_state, checkpoint_payload["training_state"])
+    )
+    replay_state = _tree_to_jax(
+        flax_serialization.from_state_dict(replay_state, checkpoint_payload["replay_state"])
+    )
 
     baseline_returns = _evaluate_policy(runtime, evaluator, training_state)["episode_returns"]
     baseline = freeze_baseline(baseline_returns)
@@ -211,7 +216,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     def eval_callback(state: TrainingState, _: int) -> dict[str, Any]:
         return _evaluate_policy(runtime, evaluator, state)
 
-    training_state, replay_state, env_state, final_metrics, env_steps, _replay_size, collapsed = _run_training_loop(
+    training_state, replay_state, env_state, final_metrics, env_steps, _replay_size, warning_triggered, collapsed = _run_training_loop(
         config=config,
         runtime=runtime,
         train_env=train_env,
@@ -234,6 +239,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         "final_env_steps": env_steps,
         "collapsed": collapsed,
         "threshold": baseline.threshold,
+        "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
     }
     _write_json(config.summary_path(), summary)
@@ -600,6 +606,8 @@ def _run_training_loop(
         raw_variance = statistics.pvariance(td_errors)
         warmup_variance = current_warmup_variance(diagnostic_state)
         if warmup_variance is None:
+            # Warmup evals intentionally do not emit rows, which also means collapse
+            # can only be observed in persisted diagnostics after warmup completes.
             diagnostic_state = record_warmup_variance(diagnostic_state, raw_variance)
             continue
 
@@ -625,7 +633,7 @@ def _run_training_loop(
         if collapsed and config.stop_on_collapse:
             break
 
-    return training_state, replay_state, env_state, metrics, env_steps, replay_size, collapsed
+    return training_state, replay_state, env_state, metrics, env_steps, replay_size, trigger.ever_triggered, collapsed
 
 
 def _build_update_step_fn(runtime: dict[str, Any], replay_buffer, config: VerticalSliceConfig):
@@ -697,11 +705,11 @@ def _aggregate_transitions(batch_transition, gamma: float, aggregator: MultiStre
             aggregator.push(
                 env_index,
                 AtlasTransition(
-                    observation=_tree_index(batch_transition.observation, env_index),
-                    action=_tree_index(batch_transition.action, env_index),
+                    observation=_tree_to_numpy(_tree_index(batch_transition.observation, env_index)),
+                    action=_tree_to_numpy(_tree_index(batch_transition.action, env_index)),
                     reward=float(np.asarray(batch_transition.reward)[env_index]),
                     discount=discount,
-                    next_observation=_tree_index(batch_transition.next_observation, env_index),
+                    next_observation=_tree_to_numpy(_tree_index(batch_transition.next_observation, env_index)),
                     extras={"state_extras": {"truncation": truncation, "time_out": truncation}},
                 ),
             )
@@ -724,6 +732,10 @@ def _to_brax_transition_batch(transitions: Sequence[AtlasTransition], gamma: flo
         if transition.discount == 0.0:
             discounts.append(0.0)
         else:
+            # Atlas stores the full n-step bootstrap multiplier (for example gamma**n).
+            # Brax SAC multiplies sampled transition.discount by `discounting=gamma`
+            # inside critic_loss, so replay stores gamma**(n-1) here to round-trip
+            # back to the original n-step multiplier in the Bellman target.
             discounts.append(float(transition.discount) / gamma)
         time_outs.append(1.0 if extract_timeout_flag(transition.extras) else 0.0)
     return brax_types.Transition(
@@ -752,10 +764,33 @@ def _sample_td_errors(
 ) -> list[float]:
     snapshot = recent_buffer.snapshot()
     rng = random.Random(seed)
+    batches = [
+        [snapshot[rng.randrange(len(snapshot))] for _ in range(config.diagnostic_batch_size)]
+        for _ in range(config.diagnostic_minibatches)
+    ]
+    observations = [_stack_tree([transition.observation for transition in batch]) for batch in batches]
+    actions = [_stack_tree([transition.action for transition in batch]) for batch in batches]
+    next_observations = [_stack_tree([transition.next_observation for transition in batch]) for batch in batches]
+    rewards = [
+        jnp.asarray([transition.reward for transition in batch], dtype=jnp.float32)
+        for batch in batches
+    ]
+    discounts = [
+        jnp.asarray([transition.discount for transition in batch], dtype=jnp.float32)
+        for batch in batches
+    ]
+
     errors: list[float] = []
     for batch_index in range(config.diagnostic_minibatches):
-        batch = [snapshot[rng.randrange(len(snapshot))] for _ in range(config.diagnostic_batch_size)]
-        batch_errors = runtime["td_error_fn"](training_state, _stack_tree([transition.observation for transition in batch]), _stack_tree([transition.action for transition in batch]), _stack_tree([transition.next_observation for transition in batch]), jnp.asarray([transition.reward for transition in batch], dtype=jnp.float32), jnp.asarray([transition.discount for transition in batch], dtype=jnp.float32), jax.random.PRNGKey(seed + batch_index))
+        batch_errors = runtime["td_error_fn"](
+            training_state,
+            observations[batch_index],
+            actions[batch_index],
+            next_observations[batch_index],
+            rewards[batch_index],
+            discounts[batch_index],
+            jax.random.PRNGKey(seed + batch_index),
+        )
         errors.extend(np.asarray(batch_errors).tolist())
     return errors
 
@@ -785,7 +820,7 @@ def _build_td_error_batch_fn(sac_network: sac_networks.SACNetworks):
         )[..., 0]
         return td_error(rewards, discounts, next_v, current_q)
 
-    return batch_td_errors
+    return jax.jit(batch_td_errors)
 
 
 def _obs_dim(spec: Any) -> int:
@@ -823,6 +858,8 @@ def _build_evaluator(runtime: dict[str, Any], eval_env, num_eval_envs: int) -> a
 
 
 def _evaluate_policy(runtime: dict[str, Any], evaluator: acting.Evaluator, training_state: TrainingState) -> dict[str, Any]:
+    # Brax's public Evaluator API only exposes aggregated metrics; this vertical slice
+    # needs per-episode returns, so it relies on 0.14.x private evaluator internals.
     evaluator._key, unroll_key = jax.random.split(evaluator._key)
     eval_state = evaluator._generate_eval_unroll(
         evaluator._eval_state_to_donate,
@@ -863,23 +900,25 @@ def _save_checkpoint(
                 observation_dtype="float32",
             ),
         },
-        "training_state": _tree_to_numpy(training_state),
-        "replay_state": _tree_to_numpy(replay_state),
+        "training_state": flax_serialization.to_state_dict(training_state),
+        "replay_state": flax_serialization.to_state_dict(replay_state),
         "replay_size": replay_size,
     }
-    with (checkpoint_dir / "checkpoint.pkl").open("wb") as handle:
-        pickle.dump(payload, handle)
+    (_checkpoint_path(checkpoint_dir)).write_bytes(flax_serialization.msgpack_serialize(payload))
 
 
 def _load_checkpoint(checkpoint_dir: Path) -> dict[str, Any]:
-    with (checkpoint_dir / "checkpoint.pkl").open("rb") as handle:
-        payload = pickle.load(handle)
+    payload = flax_serialization.msgpack_restore(_checkpoint_path(checkpoint_dir).read_bytes())
     return {
         "metadata": payload["metadata"],
-        "training_state": _tree_to_jax(payload["training_state"]),
-        "replay_state": _tree_to_jax(payload["replay_state"]),
+        "training_state": payload["training_state"],
+        "replay_state": payload["replay_state"],
         "replay_size": int(payload["replay_size"]),
     }
+
+
+def _checkpoint_path(checkpoint_dir: Path) -> Path:
+    return checkpoint_dir / "checkpoint.msgpack"
 
 
 def _tree_to_numpy(tree: Any) -> Any:
@@ -888,24 +927,6 @@ def _tree_to_numpy(tree: Any) -> Any:
 
 def _tree_to_jax(tree: Any) -> Any:
     return jax.tree_util.tree_map(lambda value: jnp.asarray(value), tree)
-
-
-def _validate_replay_state_compatibility(expected_state: Any, restored_state: Any) -> None:
-    expected_flat, expected_treedef = jax.tree_util.tree_flatten(expected_state)
-    restored_flat, restored_treedef = jax.tree_util.tree_flatten(restored_state)
-    if expected_treedef != restored_treedef:
-        raise ValueError("Checkpoint replay state tree structure does not match the current replay buffer layout.")
-    for index, (expected_leaf, restored_leaf) in enumerate(zip(expected_flat, restored_flat)):
-        expected_shape = getattr(expected_leaf, "shape", None)
-        restored_shape = getattr(restored_leaf, "shape", None)
-        expected_dtype = getattr(expected_leaf, "dtype", None)
-        restored_dtype = getattr(restored_leaf, "dtype", None)
-        if expected_shape != restored_shape or expected_dtype != restored_dtype:
-            raise ValueError(
-                "Checkpoint replay state is incompatible with the current replay buffer layout: "
-                f"leaf {index} expected shape {expected_shape}, dtype {expected_dtype}; "
-                f"found shape {restored_shape}, dtype {restored_dtype}."
-            )
 
 
 def _write_json(path: Path, payload: Any) -> None:
