@@ -12,11 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TrainingSmokeTest(unittest.TestCase):
-    def test_vertical_slice_smoke(self) -> None:
+    def _require_smoke_environment(self) -> None:
         if os.environ.get("FINE_TUNE_STABILITY_RUN_TRAINING_SMOKE") != "1":
             self.skipTest("Training smoke test is disabled by default.")
         if importlib.util.find_spec("jax") is None:
             self.skipTest("Training dependencies are not installed in this interpreter.")
+
+    def test_vertical_slice_smoke(self) -> None:
+        self._require_smoke_environment()
 
         pretrain_dir = ROOT / "results" / "runs" / "unittest_pretrain"
         finetune_dir = ROOT / "results" / "runs" / "unittest_finetune"
@@ -44,6 +47,54 @@ class TrainingSmokeTest(unittest.TestCase):
             check=True,
             cwd=ROOT,
         )
+
+    def test_pilot_smoke(self) -> None:
+        self._require_smoke_environment()
+
+        pilot_dir = ROOT / "results" / "runs" / "unittest_pilot"
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_pilot.py"),
+                "--output-dir",
+                str(pilot_dir),
+                "--pretrain-steps",
+                "16",
+                "--fine-tune-steps",
+                "160",
+                "--seeds",
+                "0",
+                "--eval-interval",
+                "32",
+                "--num-envs",
+                "2",
+                "--eval-episodes",
+                "2",
+                "--baseline-eval-episodes",
+                "2",
+                "--batch-size",
+                "8",
+                "--min-replay-size",
+                "8",
+                "--diagnostic-min-transitions",
+                "16",
+                "--diagnostic-minibatches",
+                "2",
+                "--diagnostic-batch-size",
+                "8",
+                "--episode-length",
+                "16",
+                "--throughput-probe-updates",
+                "2",
+            ],
+            check=True,
+            cwd=ROOT,
+        )
+        self.assertTrue((pilot_dir / "pilot_report.json").exists())
+        self.assertTrue((pilot_dir / "shared_pretrain" / "checkpoint" / "checkpoint.msgpack").exists())
+        self.assertTrue((pilot_dir / "seed_0" / "eval_log.jsonl").exists())
+        self.assertTrue((pilot_dir / "seed_0" / "diagnostic_summary.json").exists())
+        self.assertTrue((pilot_dir / "extreme_probe" / "summary.json").exists())
         subprocess.run(
             [
                 sys.executable,

@@ -26,6 +26,10 @@ class ImportBoundaryTest(unittest.TestCase):
         module = _load_script(ROOT / "scripts" / "run_finetune.py")
         self.assertTrue(callable(module.parse_args))
 
+    def test_run_pilot_imports_without_training_dependencies(self) -> None:
+        module = _load_script(ROOT / "scripts" / "run_pilot.py")
+        self.assertTrue(callable(module.parse_args))
+
 
 if __name__ == "__main__":
     unittest.main()
