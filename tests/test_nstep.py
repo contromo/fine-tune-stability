@@ -52,25 +52,46 @@ class NStepAggregatorTest(unittest.TestCase):
     def test_timeout_is_bootstrapped_and_tagged(self) -> None:
         gamma = 0.99
         aggregator = NStepTransitionAggregator(n_step=2, gamma=gamma)
+        outputs = aggregator.push(
+            Transition(
+                "s0",
+                "a0",
+                1.0,
+                gamma,
+                "s1",
+                extras={"state_extras": {"time_out": 1.0}},
+            )
+        )
+
+        self.assertEqual(len(outputs), 1)
+        self.assertAlmostEqual(outputs[0].discount, gamma)
+        self.assertTrue(outputs[0].extras["atlas"]["window_timeout"])
+        self.assertTrue(outputs[0].extras["atlas"]["timeout_bootstrapped"])
+
+    def test_timeout_flushes_remaining_windows_before_next_episode(self) -> None:
+        gamma = 0.99
+        aggregator = NStepTransitionAggregator(n_step=3, gamma=gamma)
         outputs = []
+        outputs.extend(aggregator.push(Transition("s0", "a0", 1.0, gamma, "s1")))
         outputs.extend(
             aggregator.push(
                 Transition(
-                    "s0",
-                    "a0",
-                    1.0,
-                    gamma,
                     "s1",
+                    "a1",
+                    2.0,
+                    gamma,
+                    "s2",
                     extras={"state_extras": {"time_out": 1.0}},
                 )
             )
         )
-        outputs.extend(aggregator.push(Transition("s1", "a1", 2.0, gamma, "s2")))
 
-        self.assertEqual(len(outputs), 1)
+        self.assertEqual(len(outputs), 2)
+        self.assertAlmostEqual(outputs[0].reward, 1.0 + gamma * 2.0)
         self.assertAlmostEqual(outputs[0].discount, gamma ** 2)
-        self.assertTrue(outputs[0].extras["atlas"]["window_timeout"])
-        self.assertTrue(outputs[0].extras["atlas"]["timeout_bootstrapped"])
+        self.assertAlmostEqual(outputs[1].reward, 2.0)
+        self.assertAlmostEqual(outputs[1].discount, gamma)
+        self.assertEqual(len(aggregator), 0)
 
     def test_multi_stream_keeps_independent_state(self) -> None:
         gamma = 0.99

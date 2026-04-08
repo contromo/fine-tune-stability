@@ -11,5 +11,19 @@ requires-python = ">=3.9"
 authors = [{name = "Codex"}]
 dependencies = []
 
-[tool.setuptools]
-packages = ["atlas"]
+[project.optional-dependencies]
+# `jax` here intentionally resolves the default CPU wheel on most systems so
+# `./scripts/setup.sh --train` works for the local smoke test. GPU users should
+# install the platform-specific JAX/JAXlib build that matches their accelerator.
+# `playground` is the distribution name that provides the `mujoco_playground`
+# import path used by this repo.
+train = [
+  "brax>=0.14.2,<0.15",
+  "jax>=0.9.2",
+  "mujoco>=3.6.0",
+  "mujoco-mjx>=3.6.0",
+  "playground>=0.2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["atlas*", "atlas_training*"]

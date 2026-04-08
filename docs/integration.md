@@ -1,6 +1,11 @@
 # Brax Integration Notes
 
-The current repo contains reusable core logic but not a bundled Brax SAC fork. When you wire this into the actual training code, use these hook points.
+The repository now has two layers:
+
+- `atlas/` stays pure and holds the reusable scientific logic
+- `atlas_training/` contains the current Brax/JAX/MuJoCo Playground vertical slice
+
+If you extend or replace the current training runtime, keep the same boundaries and hook points below.
 
 ## 1. One-step transition normalization
 
@@ -23,12 +28,16 @@ For vectorized actors, use `MultiStreamNStepAggregator` with the environment ind
 
 ## 3. Diagnostic callback
 
-At each eval checkpoint:
+At each eligible eval checkpoint:
 
-1. Sample or snapshot the recent buffer
-2. Compute TD errors with the current critic and target value estimate
-3. Summarize with `summarize_td_errors`
-4. Update `InstabilityTrigger`
+1. Require at least `diagnostic_min_transitions` recent transitions
+2. Sample the recent buffer only, using the configured diagnostic minibatch workload
+3. Compute TD errors with SAC semantics:
+   - target value: `min(Q1_target, Q2_target) - alpha * log pi(a' | s')`
+   - online estimate: `Q1_online(s, a)`
+4. Use the first two eligible evals as warmup variance only and emit no log rows yet
+5. On the third eligible eval and later, summarize with `summarize_td_errors`
+6. Update `InstabilityTrigger`
 
 Persist at least:
 
@@ -53,5 +62,7 @@ Optional fields:
 - `return_mean`
 - `variance`
 - `q95_abs_td`
+- `threshold`
+- `env_steps`
 
 This is sufficient to compute per-run warning lead times and global ROC-AUC for collapse prediction.

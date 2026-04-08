@@ -32,7 +32,23 @@ def main() -> None:
         "hyperparameters": hyperparameters.to_dict(),
         "run_count": len(sweep),
         "budget_table": build_budget_table(args.pilot_hours, sweep),
-        "runs": [cell.to_dict() for cell in sweep],
+        "runs": [
+            {
+                **cell.to_dict(),
+                "critic_width": cell.critic.width,
+                "train_steps": cell.total_steps,
+                "eval_interval": cell.eval_interval_steps,
+                "finetune_args": {
+                    "n_step": cell.n_step,
+                    "critic_width": cell.critic.width,
+                    "seed": cell.seed,
+                    "train_steps": cell.total_steps,
+                    "eval_interval": cell.eval_interval_steps,
+                    "stop_on_collapse": True,
+                },
+            }
+            for cell in sweep
+        ],
     }
 
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
