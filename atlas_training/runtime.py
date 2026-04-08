@@ -552,86 +552,92 @@ def _run_training_loop(
     update_step_fn = _build_update_step_fn(runtime, replay_buffer, config)
     env_steps = 0
     next_eval_at = config.eval_interval
+    eval_log_handle = None
 
     if eval_log_path is not None:
         eval_log_path.parent.mkdir(parents=True, exist_ok=True)
         eval_log_path.write_text("", encoding="utf-8")
+        eval_log_handle = eval_log_path.open("a", encoding="utf-8", buffering=1)
 
-    for _ in range(config.train_steps // max(config.num_envs, 1)):
-        key, actor_key, reset_key = jax.random.split(key, 3)
-        env_state, one_step_transition = runtime["actor_step_fn"](
-            training_state.normalizer_params,
-            training_state.policy_params,
-            train_env,
-            env_state,
-            actor_key,
-        )
-        training_state = training_state.replace(
-            normalizer_params=running_statistics.update(
+    try:
+        for _ in range(config.train_steps // max(config.num_envs, 1)):
+            key, actor_key, reset_key = jax.random.split(key, 3)
+            env_state, one_step_transition = runtime["actor_step_fn"](
                 training_state.normalizer_params,
-                {"state": _policy_observation(one_step_transition.observation)}
-                if isinstance(runtime["obs_size"], dict)
-                else _policy_observation(one_step_transition.observation),
-                pmap_axis_name=None,
+                training_state.policy_params,
+                train_env,
+                env_state,
+                actor_key,
             )
-        )
+            training_state = training_state.replace(
+                normalizer_params=running_statistics.update(
+                    training_state.normalizer_params,
+                    {"state": _policy_observation(one_step_transition.observation)}
+                    if isinstance(runtime["obs_size"], dict)
+                    else _policy_observation(one_step_transition.observation),
+                    pmap_axis_name=None,
+                )
+            )
 
-        emitted = _aggregate_transitions(one_step_transition, config.gamma, aggregator)
-        if emitted:
-            replay_state = replay_buffer.insert(replay_state, _to_brax_transition_batch(emitted, config.gamma))
-            recent_buffer.extend(emitted)
-            replay_size = min(config.replay_capacity, replay_size + len(emitted))
-        env_state = manual_reset_fn(env_state, reset_key)
-        env_steps += config.num_envs * config.action_repeat
+            emitted = _aggregate_transitions(one_step_transition, config.gamma, aggregator)
+            if emitted:
+                replay_state = replay_buffer.insert(replay_state, _to_brax_transition_batch(emitted, config.gamma))
+                recent_buffer.extend(emitted)
+                replay_size = min(config.replay_capacity, replay_size + len(emitted))
+            env_state = manual_reset_fn(env_state, reset_key)
+            env_steps += config.num_envs * config.action_repeat
 
-        if replay_size >= config.min_replay_size:
-            for _update in range(config.grad_updates_per_step):
-                key, update_key = jax.random.split(key)
-                training_state, replay_state, metrics = update_step_fn(training_state, replay_state, update_key)
+            if replay_size >= config.min_replay_size:
+                for _update in range(config.grad_updates_per_step):
+                    key, update_key = jax.random.split(key)
+                    training_state, replay_state, metrics = update_step_fn(training_state, replay_state, update_key)
 
-        if env_steps < next_eval_at:
-            continue
+            if env_steps < next_eval_at:
+                continue
 
-        eval_metrics = eval_callback(training_state, env_steps)
-        next_eval_at = advance_next_eval_at(next_eval_at, env_steps, config.eval_interval)
-        metrics = {**metrics, **eval_metrics}
+            eval_metrics = eval_callback(training_state, env_steps)
+            next_eval_at = advance_next_eval_at(next_eval_at, env_steps, config.eval_interval)
+            metrics = {**metrics, **eval_metrics}
 
-        if not enable_diagnostics or baseline is None or eval_log_path is None:
-            continue
+            if not enable_diagnostics or baseline is None or eval_log_path is None:
+                continue
 
-        if len(recent_buffer) < config.diagnostic_min_transitions:
-            continue
+            if len(recent_buffer) < config.diagnostic_min_transitions:
+                continue
 
-        td_errors = _sample_td_errors(runtime, training_state, recent_buffer, config, seed=config.seed + env_steps)
-        raw_variance = statistics.pvariance(td_errors)
-        warmup_variance = current_warmup_variance(diagnostic_state)
-        if warmup_variance is None:
-            # Warmup evals intentionally do not emit rows, which also means collapse
-            # can only be observed in persisted diagnostics after warmup completes.
-            diagnostic_state = record_warmup_variance(diagnostic_state, raw_variance)
-            continue
+            td_errors = _sample_td_errors(runtime, training_state, recent_buffer, config, seed=config.seed + env_steps)
+            raw_variance = statistics.pvariance(td_errors)
+            warmup_variance = current_warmup_variance(diagnostic_state)
+            if warmup_variance is None:
+                # Warmup evals intentionally do not emit rows, which also means collapse
+                # can only be observed in persisted diagnostics after warmup completes.
+                diagnostic_state = record_warmup_variance(diagnostic_state, raw_variance)
+                continue
 
-        snapshot = summarize_td_errors(td_errors, warmup_variance)
-        return_mean = float(eval_metrics["return_mean"])
-        collapsed = return_mean < baseline.threshold
-        trigger.update(snapshot.score)
-        row = make_eval_log_row(
-            run_id=config.run_id,
-            eval_index=diagnostic_state.emitted_rows,
-            score=snapshot.score,
-            collapsed=collapsed,
-            return_mean=return_mean,
-            variance=snapshot.variance,
-            q95_abs_td=snapshot.q95_abs_td,
-            threshold=baseline.threshold,
-            env_steps=env_steps,
-        )
-        diagnostic_state = mark_eval_row_emitted(diagnostic_state)
-        with eval_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row.to_dict()) + "\n")
+            snapshot = summarize_td_errors(td_errors, warmup_variance)
+            return_mean = float(eval_metrics["return_mean"])
+            collapsed = return_mean < baseline.threshold
+            trigger.update(snapshot.score)
+            row = make_eval_log_row(
+                run_id=config.run_id,
+                eval_index=diagnostic_state.emitted_rows,
+                score=snapshot.score,
+                collapsed=collapsed,
+                return_mean=return_mean,
+                variance=snapshot.variance,
+                q95_abs_td=snapshot.q95_abs_td,
+                threshold=baseline.threshold,
+                env_steps=env_steps,
+            )
+            diagnostic_state = mark_eval_row_emitted(diagnostic_state)
+            if eval_log_handle is not None:
+                eval_log_handle.write(json.dumps(row.to_dict()) + "\n")
 
-        if collapsed and config.stop_on_collapse:
-            break
+            if collapsed and config.stop_on_collapse:
+                break
+    finally:
+        if eval_log_handle is not None:
+            eval_log_handle.close()
 
     return training_state, replay_state, env_state, metrics, env_steps, replay_size, trigger.ever_triggered, collapsed
 

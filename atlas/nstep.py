@@ -92,9 +92,9 @@ class NStepTransitionAggregator:
     def _is_true_terminal(transition: Transition) -> bool:
         return float(transition.discount) == 0.0 and not extract_timeout_flag(transition.extras)
 
-    @classmethod
-    def _ends_episode(cls, transition: Transition) -> bool:
-        return cls._is_true_terminal(transition) or extract_timeout_flag(transition.extras)
+    @staticmethod
+    def _ends_episode(transition: Transition) -> bool:
+        return NStepTransitionAggregator._is_true_terminal(transition) or extract_timeout_flag(transition.extras)
 
 
 @dataclass
