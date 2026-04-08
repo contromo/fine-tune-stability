@@ -111,6 +111,24 @@ def threshold_drop_fraction(mu0: float, threshold: float) -> float:
     return (mu0 - threshold) / max(abs(mu0), EPSILON)
 
 
+def build_budget_summary(
+    representative_hours_per_100m: Sequence[float],
+    extreme_hours_per_100m: float,
+) -> dict[str, Any]:
+    representative_hours_stats = summarize_numeric(representative_hours_per_100m)
+    budget = {
+        "hours_per_100m_small": representative_hours_stats,
+        "hours_per_100m_extreme": None if not math.isfinite(extreme_hours_per_100m) else round(extreme_hours_per_100m, 6),
+        "sweep_hours_optimistic": None,
+        "sweep_hours_conservative": math.inf,
+    }
+    if representative_hours_stats is not None:
+        budget["sweep_hours_optimistic"] = round(SWEEP_RUN_COUNT * representative_hours_stats["mean"], 6)
+    if math.isfinite(extreme_hours_per_100m):
+        budget["sweep_hours_conservative"] = round(SWEEP_RUN_COUNT * extreme_hours_per_100m, 6)
+    return budget
+
+
 def classify_pilot_gate(seed_results: Sequence[dict[str, Any]], sweep_hours_conservative: float) -> tuple[str, list[str]]:
     reasons: list[str] = []
     usable = [result for result in seed_results if bool(result.get("usable"))]
@@ -392,19 +410,9 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
         if _is_finite_number(result.get("threshold_drop_fraction"))
     )
     representative_throughput_stats = summarize_numeric(representative_speeds)
-    representative_hours_stats = summarize_numeric(representative_hours)
     extreme_steps_per_second = float(probe_summary["steps_per_second"]) if probe_summary is not None else math.inf
     extreme_hours_per_100m = hours_per_100m(extreme_steps_per_second)
-    budget = {
-        "hours_per_100m_small": representative_hours_stats,
-        "hours_per_100m_extreme": None if not math.isfinite(extreme_hours_per_100m) else round(extreme_hours_per_100m, 6),
-        "sweep_hours_optimistic": None,
-        "sweep_hours_conservative": math.inf,
-    }
-    if representative_hours_stats is not None:
-        budget["sweep_hours_optimistic"] = round(SWEEP_RUN_COUNT * representative_hours_stats["mean"], 6)
-    if math.isfinite(extreme_hours_per_100m):
-        budget["sweep_hours_conservative"] = round(SWEEP_RUN_COUNT * extreme_hours_per_100m, 6)
+    budget = build_budget_summary(representative_hours, extreme_hours_per_100m)
 
     decision, reasons = classify_pilot_gate(seed_results, float(budget["sweep_hours_conservative"]))
 

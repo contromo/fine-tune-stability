@@ -7,13 +7,16 @@ from atlas_training.config import VerticalSliceConfig
 from atlas_training.pilot import (
     DEFAULT_FINE_TUNE_STEPS,
     build_pilot_layout,
+    build_budget_summary,
     classify_pilot_gate,
+    drop_fraction,
     hours_per_100m,
     minimum_finetune_steps,
     parse_args,
     parse_seed_list,
     realized_env_steps,
     required_eval_env_steps,
+    threshold_drop_fraction,
 )
 
 
@@ -105,6 +108,29 @@ class PilotTest(unittest.TestCase):
     def test_hours_per_100m_budget_math(self) -> None:
         self.assertAlmostEqual(hours_per_100m(10_000.0), 2.7777777777777777)
         self.assertGreater(hours_per_100m(1_000.0), hours_per_100m(10_000.0))
+
+    def test_build_budget_summary_assembles_optimistic_and_conservative_bounds(self) -> None:
+        budget = build_budget_summary([10.0, 20.0], 30.0)
+        self.assertEqual(budget["hours_per_100m_small"], {"mean": 15.0, "min": 10.0, "max": 20.0})
+        self.assertEqual(budget["hours_per_100m_extreme"], 30.0)
+        self.assertEqual(budget["sweep_hours_optimistic"], 720.0)
+        self.assertEqual(budget["sweep_hours_conservative"], 1440.0)
+
+    def test_build_budget_summary_handles_probe_failure_with_infinite_conservative_bound(self) -> None:
+        budget = build_budget_summary([10.0], float("inf"))
+        self.assertEqual(budget["hours_per_100m_small"], {"mean": 10.0, "min": 10.0, "max": 10.0})
+        self.assertIsNone(budget["hours_per_100m_extreme"])
+        self.assertEqual(budget["sweep_hours_optimistic"], 480.0)
+        self.assertEqual(budget["sweep_hours_conservative"], float("inf"))
+
+    def test_drop_fraction_handles_negative_nominal_mean(self) -> None:
+        self.assertAlmostEqual(drop_fraction(-10.0, -5.0), -0.5)
+
+    def test_drop_fraction_uses_epsilon_guard_near_zero(self) -> None:
+        self.assertAlmostEqual(drop_fraction(0.0, -1e-9), 0.1)
+
+    def test_threshold_drop_fraction_uses_epsilon_guard_near_zero(self) -> None:
+        self.assertAlmostEqual(threshold_drop_fraction(0.0, -1e-9), 0.1)
 
     def test_baseline_evaluator_selection_is_config_driven(self) -> None:
         shared = VerticalSliceConfig(stage="finetune", output_dir=Path("results"), eval_episodes=10)
