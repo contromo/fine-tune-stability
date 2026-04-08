@@ -56,8 +56,33 @@ def build_pilot_layout(output_dir: Path, seeds: Sequence[int]) -> PilotLayout:
     )
 
 
-def minimum_finetune_steps(eval_interval: int, required_rows: int = POST_WARMUP_ROWS_REQUIRED) -> int:
+def required_eval_env_steps(eval_interval: int, required_rows: int = POST_WARMUP_ROWS_REQUIRED) -> int:
     return (WARMUP_EVALS + required_rows) * eval_interval
+
+
+def realized_env_steps(train_steps: int, num_envs: int, action_repeat: int) -> int:
+    if num_envs <= 0:
+        raise ValueError("num_envs must be positive")
+    if action_repeat <= 0:
+        raise ValueError("action_repeat must be positive")
+    return (train_steps // num_envs) * num_envs * action_repeat
+
+
+def minimum_finetune_steps(
+    eval_interval: int,
+    *,
+    num_envs: int,
+    action_repeat: int,
+    required_rows: int = POST_WARMUP_ROWS_REQUIRED,
+) -> int:
+    if num_envs <= 0:
+        raise ValueError("num_envs must be positive")
+    if action_repeat <= 0:
+        raise ValueError("action_repeat must be positive")
+    minimum_env_steps = required_eval_env_steps(eval_interval, required_rows=required_rows)
+    env_steps_per_iteration = num_envs * action_repeat
+    iterations_needed = math.ceil(minimum_env_steps / env_steps_per_iteration)
+    return iterations_needed * num_envs
 
 
 def hours_per_100m(steps_per_second: float) -> float:
@@ -228,10 +253,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     add_shift_cli_args(parser)
     args = parser.parse_args(argv)
     args.seed_values = parse_seed_list(args.seeds)
-    minimum_steps = minimum_finetune_steps(args.eval_interval)
-    if args.fine_tune_steps < minimum_steps:
+    minimum_steps = minimum_finetune_steps(
+        args.eval_interval,
+        num_envs=args.num_envs,
+        action_repeat=args.action_repeat,
+    )
+    reachable_env_steps = realized_env_steps(args.fine_tune_steps, args.num_envs, args.action_repeat)
+    minimum_env_steps = required_eval_env_steps(args.eval_interval)
+    if reachable_env_steps < minimum_env_steps:
         raise ValueError(
-            f"--fine-tune-steps must be at least {minimum_steps} to permit {POST_WARMUP_ROWS_REQUIRED} post-warmup eval rows"
+            "--fine-tune-steps must be at least "
+            f"{minimum_steps} to permit {POST_WARMUP_ROWS_REQUIRED} post-warmup eval rows "
+            f"(reachable_env_steps={reachable_env_steps}, required_env_steps={minimum_env_steps})"
         )
     return args
 

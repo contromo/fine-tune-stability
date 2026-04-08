@@ -12,6 +12,8 @@ from atlas_training.pilot import (
     minimum_finetune_steps,
     parse_args,
     parse_seed_list,
+    realized_env_steps,
+    required_eval_env_steps,
 )
 
 
@@ -49,7 +51,54 @@ class PilotTest(unittest.TestCase):
                     "--eval-interval",
                     "100",
                     "--fine-tune-steps",
-                    str(minimum_finetune_steps(100) - 1),
+                    str(
+                        minimum_finetune_steps(
+                            100,
+                            num_envs=32,
+                            action_repeat=1,
+                        )
+                        - 1
+                    ),
+                ]
+            )
+
+    def test_minimum_finetune_steps_accounts_for_action_repeat(self) -> None:
+        minimum_steps = minimum_finetune_steps(100, num_envs=32, action_repeat=2)
+        self.assertEqual(minimum_steps, 256)
+        self.assertGreaterEqual(realized_env_steps(minimum_steps, 32, 2), required_eval_env_steps(100))
+        self.assertLess(realized_env_steps(minimum_steps - 1, 32, 2), required_eval_env_steps(100))
+
+    def test_parse_args_accepts_shorter_train_budget_when_action_repeat_increases_env_steps(self) -> None:
+        args = parse_args(
+            [
+                "--pretrain-steps",
+                "1000",
+                "--eval-interval",
+                "100",
+                "--num-envs",
+                "32",
+                "--action-repeat",
+                "2",
+                "--fine-tune-steps",
+                "256",
+            ]
+        )
+        self.assertEqual(args.fine_tune_steps, 256)
+
+    def test_parse_args_rejects_non_divisible_budget_with_insufficient_realized_env_steps(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_args(
+                [
+                    "--pretrain-steps",
+                    "1000",
+                    "--eval-interval",
+                    "100",
+                    "--num-envs",
+                    "32",
+                    "--action-repeat",
+                    "2",
+                    "--fine-tune-steps",
+                    "255",
                 ]
             )
 
