@@ -11,8 +11,9 @@ if str(ROOT) not in sys.path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pretrain a Go1 SAC checkpoint for the Stability Atlas vertical slice.")
-    parser.add_argument("--output-dir", type=Path, default=Path("results/runs/pretrain_go1"))
+    parser = argparse.ArgumentParser(description="Fine-tune a pretrained Go1 SAC checkpoint under the shifted domain.")
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, default=Path("results/runs/finetune_go1"))
     parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--env-name", type=str, default="Go1JoystickFlatTerrain")
     parser.add_argument("--n-step", type=int, default=1)
@@ -30,14 +31,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diagnostic-batch-size", type=int, default=256)
     parser.add_argument("--episode-length", type=int, default=1000)
     parser.add_argument("--action-repeat", type=int, default=1)
+    parser.add_argument("--stop-on-collapse", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    from atlas_training.runtime import run_pretrain_cli
+    from atlas_training.runtime import run_finetune_cli
 
-    run_pretrain_cli(args)
+    run_finetune_cli(args)
 
 
 if __name__ == "__main__":

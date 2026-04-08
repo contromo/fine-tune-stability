@@ -41,4 +41,8 @@ On true terminals, the aggregator flushes the remaining partial windows so the l
 - a hold-based early-warning trigger
 - simple evaluation metrics such as ROC-AUC and Pearson correlation
 
-The recent-buffer implementation lives in `atlas.recent_buffer` and is intended to store only freshly collected fine-tuning transitions.
+The recent-buffer implementation lives in `atlas.recent_buffer` and is intended to store only freshly collected fine-tuning transitions. In the current vertical slice:
+
+- diagnostic TD errors are computed from recent-buffer samples only
+- the first two eligible eval checkpoints are warmup-only and do not emit `eval_log.jsonl` rows
+- emitted eval rows begin at `eval_index = 0` on the first post-warmup checkpoint

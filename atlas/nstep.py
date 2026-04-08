@@ -40,7 +40,7 @@ class NStepTransitionAggregator:
             emitted.append(self._aggregate_window(self.n_step))
             self._buffer.popleft()
 
-        if self._is_true_terminal(processed):
+        if self._ends_episode(processed):
             emitted.extend(self.flush())
 
         return emitted
@@ -91,6 +91,10 @@ class NStepTransitionAggregator:
     @staticmethod
     def _is_true_terminal(transition: Transition) -> bool:
         return float(transition.discount) == 0.0 and not extract_timeout_flag(transition.extras)
+
+    @classmethod
+    def _ends_episode(cls, transition: Transition) -> bool:
+        return cls._is_true_terminal(transition) or extract_timeout_flag(transition.extras)
 
 
 @dataclass

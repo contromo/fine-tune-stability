@@ -2,4 +2,9 @@
 set -euo pipefail
 
 uv venv .venv
-uv pip install --python .venv/bin/python -e .
+
+if [[ "${1:-}" == "--train" ]]; then
+  uv pip install --python .venv/bin/python -e ".[train]"
+else
+  uv pip install --python .venv/bin/python -e .
+fi
