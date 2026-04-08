@@ -133,6 +133,8 @@ Always run:
 python3 -m unittest discover -s tests -v
 ```
 
+GitHub Actions runs this pure-Python suite on pull requests and pushes to `main` / `vertical_slice`.
+
 Dependency-gated runtime tests can be run with the training environment:
 
 ```bash
