@@ -5,6 +5,9 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Iterable, List, Sequence
 
+DEFAULT_TRIGGER_THRESHOLD = math.log(3.0)
+DEFAULT_TRIGGER_HOLD_EVALS = 2
+
 
 def collapse_threshold(mu0: float, sigma0: float, c: float = 2.0, rho: float = 0.2) -> float:
     sigma_rule = mu0 - (c * sigma0)
@@ -62,8 +65,8 @@ def summarize_td_errors(
 
 @dataclass
 class InstabilityTrigger:
-    threshold: float = math.log(3.0)
-    hold_evals: int = 2
+    threshold: float = DEFAULT_TRIGGER_THRESHOLD
+    hold_evals: int = DEFAULT_TRIGGER_HOLD_EVALS
     _consecutive_hits: int = field(init=False, default=0)
     _ever_triggered: bool = field(init=False, default=False)
 

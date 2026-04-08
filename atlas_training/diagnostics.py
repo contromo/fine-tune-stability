@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
-from atlas.diagnostics import collapse_horizon_labels, collapse_threshold, roc_auc
+from atlas.diagnostics import DEFAULT_TRIGGER_THRESHOLD, collapse_horizon_labels, collapse_threshold, roc_auc
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,7 @@ def summarize_eval_groups(grouped_rows: Dict[str, list[dict[str, Any]]], predict
         scores.extend(run_scores)
         labels.extend(run_labels)
 
-        warning_index = next((index for index, score in enumerate(run_scores) if score > 1.0986122886681098), None)
+        warning_index = next((index for index, score in enumerate(run_scores) if score > DEFAULT_TRIGGER_THRESHOLD), None)
         collapse_index = next((index for index, flag in enumerate(collapse_flags) if flag), None)
         lead_time = None
         if warning_index is not None and collapse_index is not None and warning_index < collapse_index:

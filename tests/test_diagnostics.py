@@ -4,6 +4,7 @@ import math
 import unittest
 
 from atlas.diagnostics import (
+    DEFAULT_TRIGGER_THRESHOLD,
     InstabilityTrigger,
     collapse_horizon_labels,
     collapse_threshold,
@@ -15,6 +16,10 @@ from atlas.diagnostics import (
 
 
 class DiagnosticsTest(unittest.TestCase):
+    def test_default_trigger_threshold_matches_instability_trigger(self) -> None:
+        self.assertAlmostEqual(DEFAULT_TRIGGER_THRESHOLD, math.log(3.0))
+        self.assertAlmostEqual(InstabilityTrigger().threshold, DEFAULT_TRIGGER_THRESHOLD)
+
     def test_collapse_threshold_uses_more_conservative_rule(self) -> None:
         self.assertEqual(collapse_threshold(mu0=100.0, sigma0=5.0, c=2.0, rho=0.2), 80.0)
 
