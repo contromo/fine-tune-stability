@@ -131,7 +131,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
     training_state = _init_training_state(state_key, runtime, config)
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
 
-    training_state, replay_state, env_state, final_metrics, env_steps, _collapsed = _run_training_loop(
+    training_state, replay_state, env_state, final_metrics, env_steps, replay_size, _collapsed = _run_training_loop(
         config=config,
         runtime=runtime,
         train_env=train_env,
@@ -150,7 +150,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
         config,
         training_state,
         replay_state,
-        replay_size=int(replay_buffer._size),
+        replay_size=replay_size,
     )
 
     summary = {
@@ -187,7 +187,6 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     training_state = checkpoint_payload["training_state"]
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
     replay_state = checkpoint_payload["replay_state"]
-    replay_buffer._size = int(checkpoint_payload["replay_size"])
 
     baseline_returns = _evaluate_policy(runtime, evaluator, training_state)["episode_returns"]
     baseline = freeze_baseline(baseline_returns)
@@ -205,7 +204,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     def eval_callback(state: TrainingState, _: int) -> dict[str, Any]:
         return _evaluate_policy(runtime, evaluator, state)
 
-    training_state, replay_state, env_state, final_metrics, env_steps, collapsed = _run_training_loop(
+    training_state, replay_state, env_state, final_metrics, env_steps, _replay_size, collapsed = _run_training_loop(
         config=config,
         runtime=runtime,
         train_env=train_env,
@@ -347,7 +346,6 @@ def _init_replay_buffer(runtime: dict[str, Any], config: VerticalSliceConfig, ke
         sample_batch_size=config.batch_size,
     )
     replay_state = replay_buffer.init(key)
-    replay_buffer._size = 0
     return replay_buffer, replay_state
 
 
@@ -564,8 +562,6 @@ def _run_training_loop(
             replay_state = replay_buffer.insert(replay_state, _to_brax_transition_batch(emitted, config.gamma))
             recent_buffer.extend(emitted)
             replay_size = min(config.replay_capacity, replay_size + len(emitted))
-            replay_buffer._size = replay_size
-
         env_state = manual_reset_fn(env_state, reset_key)
         env_steps += config.num_envs * config.action_repeat
 
@@ -615,7 +611,7 @@ def _run_training_loop(
         if collapsed and config.stop_on_collapse:
             break
 
-    return training_state, replay_state, env_state, metrics, env_steps, collapsed
+    return training_state, replay_state, env_state, metrics, env_steps, replay_size, collapsed
 
 
 def _build_update_step_fn(runtime: dict[str, Any], replay_buffer, config: VerticalSliceConfig):
