@@ -37,6 +37,8 @@ Install with the training stack:
 ./scripts/setup.sh --train
 ```
 
+`.[train]` intentionally uses the default `jax` package so a fresh install gets a CPU-compatible smoke-test stack. If you plan to run on GPU, replace or upgrade that JAX install with the platform-specific wheel set that matches your accelerator.
+
 Run the unit tests:
 
 ```bash

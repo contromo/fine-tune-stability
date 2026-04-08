@@ -12,12 +12,15 @@ authors = [{name = "Codex"}]
 dependencies = []
 
 [project.optional-dependencies]
+# `jax` here intentionally resolves the default CPU wheel on most systems so
+# `./scripts/setup.sh --train` works for the local smoke test. GPU users should
+# install the platform-specific JAX/JAXlib build that matches their accelerator.
 train = [
-  "brax",
-  "jax",
-  "mujoco",
-  "mujoco-mjx",
-  "playground",
+  "brax>=0.14.2",
+  "jax>=0.9.2",
+  "mujoco>=3.6.0",
+  "mujoco-mjx>=3.6.0",
+  "playground>=0.2.0",
 ]
 
 [tool.setuptools.packages.find]
