@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from atlas_training.diagnostics import (
     DiagnosticLogState,
     advance_next_eval_at,
     current_warmup_variance,
     freeze_baseline,
+    load_eval_log,
     make_eval_log_row,
     mark_eval_row_emitted,
     record_warmup_variance,
+    summarize_eval_groups,
+    write_diagnostic_summary,
 )
 
 
@@ -67,6 +73,47 @@ class TrainingDiagnosticsTest(unittest.TestCase):
     def test_advance_next_eval_at_rejects_non_positive_interval(self) -> None:
         with self.assertRaises(ValueError):
             advance_next_eval_at(10, 12, 0)
+
+    def test_load_eval_log_allows_missing_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "missing_eval_log.jsonl"
+            grouped = load_eval_log(missing, allow_missing=True)
+            self.assertEqual(grouped, {})
+
+    def test_summarize_eval_groups_matches_expected_schema(self) -> None:
+        grouped = {
+            "run_a": [
+                {"run_id": "run_a", "eval_index": 0, "score": 0.1, "collapsed": False},
+                {"run_id": "run_a", "eval_index": 1, "score": 1.5, "collapsed": True},
+            ],
+            "run_b": [
+                {"run_id": "run_b", "eval_index": 0, "score": 0.0, "collapsed": False},
+                {"run_id": "run_b", "eval_index": 1, "score": 0.2, "collapsed": False},
+            ],
+        }
+        summary = summarize_eval_groups(grouped, prediction_horizon=2)
+        self.assertEqual(summary["prediction_horizon_evals"], 2)
+        self.assertEqual(len(summary["runs"]), 2)
+        self.assertIsNotNone(summary["global_roc_auc"])
+
+    def test_write_diagnostic_summary_round_trips_shared_logic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            eval_log = Path(tmpdir) / "eval_log.jsonl"
+            output = Path(tmpdir) / "summary.json"
+            eval_log.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"run_id": "run", "eval_index": 0, "score": 0.1, "collapsed": False}),
+                        json.dumps({"run_id": "run", "eval_index": 1, "score": 1.4, "collapsed": True}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            summary = write_diagnostic_summary(eval_log, output, prediction_horizon=3)
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["prediction_horizon_evals"], 3)
+            self.assertEqual(summary["runs"][0]["run_id"], "run")
 
 
 if __name__ == "__main__":
