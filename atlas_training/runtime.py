@@ -43,7 +43,7 @@ from atlas_training.diagnostics import (
     mark_eval_row_emitted,
     record_warmup_variance,
 )
-from atlas_training.util import write_json
+from atlas_training.util import hours_per_100m, summarize_throughput_rates, write_json
 
 FLOOR_GEOM_ID = 0
 TORSO_BODY_ID = 1
@@ -164,7 +164,6 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
         "created_at": _utc_now(),
         "run_id": config.run_id,
         "checkpoint_dir": str(config.checkpoint_dir()),
-        "env_steps": env_steps,
         "final_env_steps": env_steps,
         "final_eval_return_mean": nominal_metrics["return_mean"],
         "final_eval_return_std": nominal_metrics["return_std"],
@@ -248,7 +247,6 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         "created_at": _utc_now(),
         "run_id": config.run_id,
         "checkpoint": str(config.checkpoint),
-        "env_steps": env_steps,
         "final_env_steps": env_steps,
         "collapsed": collapsed,
         "threshold": baseline.threshold,
@@ -366,31 +364,32 @@ def run_throughput_probe(
             current_window_start_env_steps = env_steps
 
     window_rates = [float(window["steps_per_second"]) for window in timed_windows]
+    throughput_stats = summarize_throughput_rates(window_rates)
     summary = {
         "stage": config.stage,
         "created_at": _utc_now(),
         "run_id": config.run_id,
-        "env_steps": env_steps,
         "final_env_steps": env_steps,
         "wallclock_seconds": round(time.perf_counter() - start_time, 6),
-        "steps_per_second": round(statistics.mean(window_rates), 6),
-        "hours_per_100m": round(100_000_000.0 / statistics.mean(window_rates) / 3600.0, 6),
+        "steps_per_second": round(throughput_stats["steps_per_second_mean"], 6),
+        "hours_per_100m": round(throughput_stats["hours_per_100m_mean"], 6),
         "throughput_scope": "steady_state_training_only",
         "throughput_notes": [
             "steps_per_second is measured after replay warmup and after the first compiled update completes",
             "window measurements exclude runtime construction and untimed warmup iterations",
+            "hours_per_100m is the mean of per-window hour estimates, not the reciprocal of the mean rate",
         ],
         "training_metrics": metrics,
         "timed_update_windows": timed_update_windows,
         "updates_per_window": updates_per_window,
         "total_updates": total_updates,
         "throughput_window_stats": {
-            "steps_per_second_mean": round(statistics.mean(window_rates), 6),
-            "steps_per_second_min": round(min(window_rates), 6),
-            "steps_per_second_max": round(max(window_rates), 6),
-            "hours_per_100m_mean": round(100_000_000.0 / statistics.mean(window_rates) / 3600.0, 6),
-            "hours_per_100m_min": round(100_000_000.0 / max(window_rates) / 3600.0, 6),
-            "hours_per_100m_max": round(100_000_000.0 / min(window_rates) / 3600.0, 6),
+            "steps_per_second_mean": round(throughput_stats["steps_per_second_mean"], 6),
+            "steps_per_second_min": round(throughput_stats["steps_per_second_min"], 6),
+            "steps_per_second_max": round(throughput_stats["steps_per_second_max"], 6),
+            "hours_per_100m_mean": round(throughput_stats["hours_per_100m_mean"], 6),
+            "hours_per_100m_min": round(throughput_stats["hours_per_100m_min"], 6),
+            "hours_per_100m_max": round(throughput_stats["hours_per_100m_max"], 6),
         },
         "window_measurements": timed_windows,
     }

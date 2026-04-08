@@ -127,10 +127,10 @@ def add_shift_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
 
 def shift_from_args(args: argparse.Namespace) -> ShiftSpec:
     return ShiftSpec(
-        train_friction_range=(float(args.train_friction_min), float(args.train_friction_max)),
-        train_payload_range=(float(args.train_payload_min), float(args.train_payload_max)),
-        fine_tune_friction=float(args.fine_tune_friction),
-        fine_tune_payload=float(args.fine_tune_payload),
+        train_friction_range=(args.train_friction_min, args.train_friction_max),
+        train_payload_range=(args.train_payload_min, args.train_payload_max),
+        fine_tune_friction=args.fine_tune_friction,
+        fine_tune_payload=args.fine_tune_payload,
     )
 
 

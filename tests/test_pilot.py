@@ -6,6 +6,9 @@ from pathlib import Path
 from atlas_training.config import VerticalSliceConfig
 from atlas_training.pilot import (
     DEFAULT_FINE_TUNE_STEPS,
+    ProbePhaseResult,
+    PretrainPhaseResult,
+    _build_pilot_report,
     build_pilot_layout,
     build_budget_summary,
     classify_pilot_gate,
@@ -122,6 +125,53 @@ class PilotTest(unittest.TestCase):
         self.assertIsNone(budget["hours_per_100m_extreme"])
         self.assertEqual(budget["sweep_hours_optimistic"], 480.0)
         self.assertEqual(budget["sweep_hours_conservative"], float("inf"))
+
+    def test_build_pilot_report_treats_missing_probe_as_zero_throughput(self) -> None:
+        args = parse_args(["--pretrain-steps", "1000", "--run-id", "pilot_gate"])
+        layout = build_pilot_layout(Path("results/runs/pilot_gate"), args.seed_values)
+        shift = args.shift if hasattr(args, "shift") else None
+        if shift is None:
+            from atlas_training.config import shift_from_args
+
+            shift = shift_from_args(args)
+        pretrain = PretrainPhaseResult(
+            config=VerticalSliceConfig(stage="pretrain", output_dir=layout.pretrain_dir),
+            summary={"wallclock_seconds": 1.0, "steps_per_second": 2.0},
+            nominal_mean=10.0,
+            nominal_std=1.0,
+        )
+        seed_results = [
+            {
+                "seed": 0,
+                "status": "ok",
+                "usable": True,
+                "drop_fraction": 0.2,
+                "threshold_drop_fraction": 0.3,
+                "steps_per_second": 100.0,
+                "hours_per_100m": hours_per_100m(100.0),
+                "has_nonfinite_metrics": False,
+            },
+            {
+                "seed": 1,
+                "status": "ok",
+                "usable": True,
+                "drop_fraction": 0.3,
+                "threshold_drop_fraction": 0.4,
+                "steps_per_second": 120.0,
+                "hours_per_100m": hours_per_100m(120.0),
+                "has_nonfinite_metrics": False,
+            },
+        ]
+        probe = ProbePhaseResult(
+            config=VerticalSliceConfig(stage="throughput_probe", output_dir=layout.probe_dir),
+            summary=None,
+            error="probe failed",
+        )
+
+        report = _build_pilot_report(args, layout, shift, pretrain, seed_results, probe)
+
+        self.assertEqual(report["extreme_probe"]["steps_per_second"], None)
+        self.assertEqual(report["budget"]["sweep_hours_conservative"], float("inf"))
 
     def test_drop_fraction_handles_negative_nominal_mean(self) -> None:
         self.assertAlmostEqual(drop_fraction(-10.0, -5.0), -0.5)
