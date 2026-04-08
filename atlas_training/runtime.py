@@ -167,6 +167,10 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
         "final_env_steps": env_steps,
         "final_eval_return_mean": nominal_metrics["return_mean"],
         "final_eval_return_std": nominal_metrics["return_std"],
+        "throughput_scope": "wallclock_inclusive",
+        "throughput_notes": [
+            "steps_per_second includes runtime construction, the final evaluation pass, and checkpoint serialization",
+        ],
         "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
     }
@@ -248,6 +252,10 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         "collapsed": collapsed,
         "threshold": baseline.threshold,
         "baseline_eval_episodes": config.effective_baseline_eval_episodes(),
+        "throughput_scope": "wallclock_inclusive",
+        "throughput_notes": [
+            "steps_per_second includes checkpoint restore, baseline evaluation, eval callbacks during training, and summary serialization",
+        ],
         "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
     }
@@ -366,6 +374,11 @@ def run_throughput_probe(
         "wallclock_seconds": round(time.perf_counter() - start_time, 6),
         "steps_per_second": round(statistics.mean(window_rates), 6),
         "hours_per_100m": round(100_000_000.0 / statistics.mean(window_rates) / 3600.0, 6),
+        "throughput_scope": "steady_state_training_only",
+        "throughput_notes": [
+            "steps_per_second is measured after replay warmup and after the first compiled update completes",
+            "window measurements exclude runtime construction and untimed warmup iterations",
+        ],
         "training_metrics": metrics,
         "timed_update_windows": timed_update_windows,
         "updates_per_window": updates_per_window,
