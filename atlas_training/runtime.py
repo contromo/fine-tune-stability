@@ -35,6 +35,7 @@ from atlas_training.config import VerticalSliceConfig, build_run_id, checkpoint_
 from atlas_training.diagnostics import (
     DiagnosticLogState,
     FrozenBaseline,
+    advance_next_eval_at,
     current_warmup_variance,
     freeze_baseline,
     make_eval_log_row,
@@ -545,6 +546,7 @@ def _run_training_loop(
 
     update_step_fn = _build_update_step_fn(runtime, replay_buffer, config)
     env_steps = 0
+    next_eval_at = config.eval_interval
 
     if eval_log_path is not None:
         eval_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -582,10 +584,11 @@ def _run_training_loop(
                 key, update_key = jax.random.split(key)
                 training_state, replay_state, metrics = update_step_fn(training_state, replay_state, update_key)
 
-        if env_steps % config.eval_interval != 0:
+        if env_steps < next_eval_at:
             continue
 
         eval_metrics = eval_callback(training_state, env_steps)
+        next_eval_at = advance_next_eval_at(next_eval_at, env_steps, config.eval_interval)
         metrics = {**metrics, **eval_metrics}
 
         if not enable_diagnostics or baseline is None or eval_log_path is None:

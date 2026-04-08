@@ -80,6 +80,15 @@ def mark_eval_row_emitted(state: DiagnosticLogState) -> DiagnosticLogState:
     )
 
 
+def advance_next_eval_at(next_eval_at: int, env_steps: int, eval_interval: int) -> int:
+    if eval_interval <= 0:
+        raise ValueError("eval_interval must be positive")
+    if env_steps < next_eval_at:
+        return next_eval_at
+    skipped_intervals = (env_steps - next_eval_at) // eval_interval
+    return next_eval_at + (skipped_intervals + 1) * eval_interval
+
+
 def make_eval_log_row(
     *,
     run_id: str,

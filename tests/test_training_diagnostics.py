@@ -4,6 +4,7 @@ import unittest
 
 from atlas_training.diagnostics import (
     DiagnosticLogState,
+    advance_next_eval_at,
     current_warmup_variance,
     freeze_baseline,
     make_eval_log_row,
@@ -57,6 +58,15 @@ class TrainingDiagnosticsTest(unittest.TestCase):
 
         self.assertEqual(row0.eval_index, 0)
         self.assertEqual(row1.eval_index, 1)
+
+    def test_advance_next_eval_at_handles_non_divisible_step_sizes(self) -> None:
+        self.assertEqual(advance_next_eval_at(10, 12, 10), 20)
+        self.assertEqual(advance_next_eval_at(20, 24, 10), 30)
+        self.assertEqual(advance_next_eval_at(10, 30, 10), 40)
+
+    def test_advance_next_eval_at_rejects_non_positive_interval(self) -> None:
+        with self.assertRaises(ValueError):
+            advance_next_eval_at(10, 12, 0)
 
 
 if __name__ == "__main__":
