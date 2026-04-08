@@ -250,10 +250,9 @@ def _build_runtime(config: VerticalSliceConfig) -> dict[str, Any]:
     action_size = probe_env.action_size
 
     def policy_preprocess(observations, mean_std):
-        selected = observations["state"] if isinstance(observations, dict) else observations
         if config.normalize_observations:
-            return running_statistics.normalize(selected, mean_std)
-        return selected
+            return running_statistics.normalize(observations, mean_std)
+        return observations
 
     def critic_preprocess(observations, _mean_std):
         if isinstance(observations, dict):
