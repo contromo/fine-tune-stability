@@ -707,6 +707,9 @@ def _aggregate_transitions(batch_transition, gamma: float, aggregator: MultiStre
         truncation = float(np.asarray(batch_transition.extras["state_extras"]["truncation"])[env_index])
         brax_discount = float(np.asarray(batch_transition.discount)[env_index])
         discount = gamma if (brax_discount == 1.0 or truncation == 1.0) else 0.0
+        state_extras = {"truncation": truncation}
+        if truncation == 1.0:
+            state_extras["time_out"] = 1.0
         emitted.extend(
             aggregator.push(
                 env_index,
@@ -716,7 +719,7 @@ def _aggregate_transitions(batch_transition, gamma: float, aggregator: MultiStre
                     reward=float(np.asarray(batch_transition.reward)[env_index]),
                     discount=discount,
                     next_observation=_tree_to_numpy(_tree_index(batch_transition.next_observation, env_index)),
-                    extras={"state_extras": {"truncation": truncation, "time_out": truncation}},
+                    extras={"state_extras": state_extras},
                 ),
             )
         )

@@ -68,6 +68,22 @@ class TrainingRuntimeTest(unittest.TestCase):
         self.assertIsInstance(emitted[0].observation["privileged_state"], np.ndarray)
         self.assertIsInstance(emitted[0].action, np.ndarray)
         self.assertIsInstance(emitted[0].next_observation["state"], np.ndarray)
+        self.assertNotIn("time_out", emitted[0].extras["state_extras"])
+
+    def test_aggregate_transitions_marks_timeout_only_on_truncation(self) -> None:
+        jnp, _np, aggregator_cls, aggregate_transitions, _to_brax_transition_batch = self._require_runtime()
+        gamma = 0.99
+        batched = SimpleNamespace(
+            observation={"state": jnp.asarray([[1.0]], dtype=jnp.float32)},
+            action=jnp.asarray([[0.1]], dtype=jnp.float32),
+            reward=jnp.asarray([1.0], dtype=jnp.float32),
+            discount=jnp.asarray([0.0], dtype=jnp.float32),
+            next_observation={"state": jnp.asarray([[2.0]], dtype=jnp.float32)},
+            extras={"state_extras": {"truncation": jnp.asarray([1.0], dtype=jnp.float32)}},
+        )
+
+        emitted = aggregate_transitions(batched, gamma, aggregator_cls(n_step=1, gamma=gamma))
+        self.assertEqual(emitted[0].extras["state_extras"]["time_out"], 1.0)
 
 
 if __name__ == "__main__":

@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+import argparse
 import unittest
 from pathlib import Path
 
-from atlas_training.config import VerticalSliceConfig, build_run_id, checkpoint_signature, validate_checkpoint_compatibility
+from atlas_training.config import (
+    VerticalSliceConfig,
+    add_common_cli_args,
+    build_run_id,
+    checkpoint_signature,
+    validate_checkpoint_compatibility,
+)
 
 
 class TrainingConfigTest(unittest.TestCase):
     def test_build_run_id(self) -> None:
         self.assertEqual(build_run_id("finetune", 3, 1024, 7), "finetune_n3_c1024_seed7")
+
+    def test_add_common_cli_args(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_common_cli_args(parser, output_dir_default=Path("results/runs/example"))
+        args = parser.parse_args([])
+        self.assertEqual(args.output_dir, Path("results/runs/example"))
+        self.assertEqual(args.env_name, "Go1JoystickFlatTerrain")
+        self.assertEqual(args.batch_size, 256)
+        self.assertEqual(args.eval_interval, 1024)
 
     def test_with_run_id_preserves_shift_dataclass(self) -> None:
         config = VerticalSliceConfig(stage="pretrain", output_dir=Path("results"))

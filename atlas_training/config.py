@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Mapping
@@ -78,6 +79,32 @@ class VerticalSliceConfig:
 
 def build_run_id(stage: str, n_step: int, critic_width: int, seed: int) -> str:
     return f"{stage}_n{n_step}_c{critic_width}_seed{seed}"
+
+
+def add_common_cli_args(
+    parser: argparse.ArgumentParser,
+    *,
+    output_dir_default: Path,
+) -> argparse.ArgumentParser:
+    parser.add_argument("--output-dir", type=Path, default=output_dir_default)
+    parser.add_argument("--run-id", type=str, default="")
+    parser.add_argument("--env-name", type=str, default="Go1JoystickFlatTerrain")
+    parser.add_argument("--n-step", type=int, default=1)
+    parser.add_argument("--critic-width", type=int, default=256)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--train-steps", type=int, default=4096)
+    parser.add_argument("--eval-interval", type=int, default=1024)
+    parser.add_argument("--num-envs", type=int, default=32)
+    parser.add_argument("--eval-episodes", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--replay-capacity", type=int, default=100000)
+    parser.add_argument("--min-replay-size", type=int, default=1024)
+    parser.add_argument("--diagnostic-min-transitions", type=int, default=1024)
+    parser.add_argument("--diagnostic-minibatches", type=int, default=100)
+    parser.add_argument("--diagnostic-batch-size", type=int, default=256)
+    parser.add_argument("--episode-length", type=int, default=1000)
+    parser.add_argument("--action-repeat", type=int, default=1)
+    return parser
 
 
 def _normalize_nested_spec(value: Any) -> Any:
