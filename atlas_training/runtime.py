@@ -43,6 +43,7 @@ from atlas_training.diagnostics import (
     mark_eval_row_emitted,
     record_warmup_variance,
 )
+from atlas_training.util import write_json
 
 FLOOR_GEOM_ID = 0
 TORSO_BODY_ID = 1
@@ -122,7 +123,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
     start_time = time.perf_counter()
     config = config.with_run_id()
     _ensure_output_dir(config.output_dir)
-    _write_json(config.config_path(), config.to_dict())
+    write_json(config.config_path(), config.to_dict())
 
     runtime = _build_runtime(config)
     train_env = _build_env(config, batch_size=config.num_envs, domain="pretrain")
@@ -176,7 +177,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
     }
     summary["wallclock_seconds"] = round(time.perf_counter() - start_time, 6)
     summary["steps_per_second"] = _steps_per_second(env_steps, summary["wallclock_seconds"])
-    _write_json(config.summary_path(), summary)
+    write_json(config.summary_path(), summary)
     return summary
 
 
@@ -194,7 +195,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         observation_spec=runtime["obs_size"],
         observation_dtype="float32",
     )
-    _write_json(config.config_path(), config.to_dict())
+    write_json(config.config_path(), config.to_dict())
     train_env = _build_env(config, batch_size=config.num_envs, domain="finetune")
     baseline_evaluator, evaluator = _build_finetune_evaluators(runtime, config)
 
@@ -212,7 +213,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
 
     baseline_returns = _evaluate_policy(runtime, baseline_evaluator, training_state)["episode_returns"]
     baseline = freeze_baseline(baseline_returns)
-    _write_json(
+    write_json(
         config.pretrain_baseline_path(),
         {
             "created_at": _utc_now(),
@@ -261,7 +262,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     }
     summary["wallclock_seconds"] = round(time.perf_counter() - start_time, 6)
     summary["steps_per_second"] = _steps_per_second(env_steps, summary["wallclock_seconds"])
-    _write_json(config.summary_path(), summary)
+    write_json(config.summary_path(), summary)
     return summary
 
 
@@ -279,7 +280,7 @@ def run_throughput_probe(
     start_time = time.perf_counter()
     config = config.with_run_id()
     _ensure_output_dir(config.output_dir)
-    _write_json(
+    write_json(
         config.config_path(),
         {
             **config.to_dict(),
@@ -393,7 +394,7 @@ def run_throughput_probe(
         },
         "window_measurements": timed_windows,
     }
-    _write_json(config.summary_path(), summary)
+    write_json(config.summary_path(), summary)
     return summary
 
 
@@ -1109,23 +1110,6 @@ def _tree_to_numpy(tree: Any) -> Any:
 
 def _tree_to_jax(tree: Any) -> Any:
     return jax.tree_util.tree_map(lambda value: jnp.asarray(value), tree)
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_ready(payload), indent=2) + "\n", encoding="utf-8")
-
-
-def _json_ready(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {key: _json_ready(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, list):
-        return [_json_ready(item) for item in value]
-    return value
 
 
 def _ensure_output_dir(path: Path) -> None:

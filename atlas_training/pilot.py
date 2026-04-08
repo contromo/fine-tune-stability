@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, Sequence
 
 from atlas_training.config import VerticalSliceConfig, add_shift_cli_args, shift_from_args
 from atlas_training.diagnostics import write_diagnostic_summary
+from atlas_training.util import write_json
 
 REPRESENTATIVE_N_STEP = 1
 REPRESENTATIVE_CRITIC_WIDTH = 256
@@ -198,23 +199,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"(reachable_env_steps={reachable_env_steps}, required_env_steps={minimum_env_steps})"
         )
     return args
-
-
-def _json_ready(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {key: _json_ready(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, list):
-        return [_json_ready(item) for item in value]
-    return value
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_ready(payload), indent=2) + "\n", encoding="utf-8")
 
 
 def _is_finite_number(value: Any) -> bool:
@@ -485,5 +469,5 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
             "fine_tune_payload": shift.fine_tune_payload,
         },
     }
-    _write_json(layout.report_path, report)
+    write_json(layout.report_path, report)
     return report
