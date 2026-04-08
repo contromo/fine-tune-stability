@@ -1,45 +1,57 @@
 # Fine-Tuning Stability Atlas
 
-Public repository for the Stability Atlas codebase. It now provides both the dependency-light core atlas modules and a first vertical-slice Brax/MuJoCo Playground training runtime:
+`fine-tune-stability` is a small research codebase for studying collapse during sample-efficient fine-tuning of robotic RL policies. The repository is split into:
 
-- n-step transition aggregation with timeout-aware bootstrapping
-- recent-transition cyclic buffer for instability diagnostics
-- collapse thresholds, TD-error summary statistics, and early-warning trigger logic
-- a sibling `atlas_training` package for Go1 SAC pretraining and shifted-domain fine-tuning
-- experiment sweep generation for the preregistered atlas grid
-- lightweight tests plus a dependency-gated training smoke path
+- `atlas/`: pure, dependency-light research utilities
+- `atlas_training/`: the Brax + MuJoCo Playground vertical slice for Go1 SAC pretrain/fine-tune runs
 
-## Status
+The current implementation is designed to answer one concrete question well: can we pretrain a Go1 locomotion policy, shift the domain at fine-tune time, log recent-buffer TD diagnostics, and recover the artifacts needed for a stability-atlas analysis.
 
-The repo keeps the reusable scientific logic in `atlas/` and isolates Brax/JAX/MuJoCo Playground code in `atlas_training/` so pure-Python installs and tests do not depend on the training stack.
+## What Is Here
 
-## Layout
+- naive off-policy n-step aggregation with timeout-aware flushing
+- recent-transition diagnostics based on TD-error variance and q95
+- collapse-threshold utilities and warning-score logic
+- a one-cell Brax/MuJoCo Playground training slice for `Go1JoystickFlatTerrain`
+- reproducible runner scripts for pretrain, fine-tune, sweep manifest generation, and diagnostic summarization
 
-- `atlas/`: pure core library modules
-- `atlas_training/`: Brax/MuJoCo Playground runtime for the one-cell vertical slice
-- `docs/`: methodology and integration notes
-- `experiments/`: experiment-level notes and placeholders
-- `scripts/`: local runner utilities
-- `tests/`: unit tests for the core logic
-- `results/`: generated manifests and summaries
+## Repo Layout
 
-## Quickstart
+- `atlas/`
+  Pure helpers for transitions, n-step aggregation, time-limit handling, recent buffers, and diagnostics.
+- `atlas_training/`
+  Runtime code for environment construction, SAC wiring, checkpoint save/load, and fine-tune diagnostics.
+- `scripts/`
+  CLI entrypoints and the one-command smoke flow.
+- `tests/`
+  Pure-Python tests plus dependency-gated runtime coverage.
+- `docs/`
+  Methodology notes and Brax integration details.
 
-Create a local virtual environment and install the package:
+## Install
+
+Base install:
 
 ```bash
 ./scripts/setup.sh
 ```
 
-Install with the training stack:
+Training install:
 
 ```bash
 ./scripts/setup.sh --train
 ```
 
-`.[train]` intentionally uses the default `jax` package so a fresh install gets a CPU-compatible smoke-test stack. If you plan to run on GPU, replace or upgrade that JAX install with the platform-specific wheel set that matches your accelerator.
+Notes:
 
-Run the unit tests:
+- `.[train]` intentionally resolves the default `jax` package so CPU smoke runs work out of the box.
+- GPU users should replace or upgrade that JAX install with the platform-specific wheel set for their accelerator.
+- `playground` is the distribution name that provides the `mujoco_playground` import path used by this repo.
+- Brax is intentionally constrained to `>=0.14.2,<0.15` because `atlas_training` depends on some 0.14.x evaluator and replay internals.
+
+## Quickstart
+
+Run the pure-Python test suite:
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -57,38 +69,84 @@ Run a small pretrain checkpoint:
 python3 scripts/run_pretrain.py --output-dir results/runs/pretrain_go1
 ```
 
-Fine-tune under the shifted domain:
+Fine-tune from that checkpoint under the shifted domain:
 
 ```bash
-python3 scripts/run_finetune.py --checkpoint results/runs/pretrain_go1/checkpoint --output-dir results/runs/finetune_go1
+python3 scripts/run_finetune.py \
+  --checkpoint results/runs/pretrain_go1/checkpoint \
+  --output-dir results/runs/finetune_go1
 ```
 
-Compute diagnostic metrics from an eval log:
+Summarize diagnostic logs:
 
 ```bash
-python3 scripts/run_diagnostic.py --eval-log results/runs/finetune_go1/eval_log.jsonl --output results/diagnostic_summary.json
+python3 scripts/run_diagnostic.py \
+  --eval-log results/runs/finetune_go1/eval_log.jsonl \
+  --output results/diagnostic_summary.json
 ```
 
-Write a sample eval log schema:
-
-```bash
-python3 scripts/run_diagnostic.py --write-sample results/example_eval_log.jsonl
-```
-
-Run the scaffold end-to-end:
+Run the end-to-end smoke flow:
 
 ```bash
 ./scripts/run_all.sh
 ```
 
-## Integration Notes
+The smoke flow uses deliberately tiny training settings for runtime reasons; it is a wiring check, not a meaningful experiment.
 
-The core code assumes one-step transitions use the standard SAC-style bootstrap multiplier convention:
+## Artifacts
 
-- continuing transition: `discount = gamma`
-- environment terminal: `discount = 0.0`
+Pretrain writes:
+
+- `results/runs/<run_id>/config.json`
+- `results/runs/<run_id>/summary.json`
+- `results/runs/<run_id>/checkpoint/checkpoint.msgpack`
+
+Fine-tune writes:
+
+- `results/runs/<run_id>/config.json`
+- `results/runs/<run_id>/pretrain_baseline.json`
+- `results/runs/<run_id>/eval_log.jsonl`
+- `results/runs/<run_id>/summary.json`
+
+`summary.json` includes `warning_triggered` as a convenience summary field. The canonical per-eval warning signal remains `score` in `eval_log.jsonl`.
+
+## Important Runtime Conventions
+
+One-step transitions use bootstrap-multiplier semantics:
+
+- continuing step: `discount = gamma`
+- true terminal: `discount = 0.0`
 - time-limit truncation: `discount = gamma`
 
-If your existing stack stores raw done masks instead, convert them before inserting into the atlas helpers.
+The vertical slice also relies on these diagnostic conventions:
 
-The runtime contract and hook points are documented in [`docs/integration.md`](docs/integration.md).
+- TD diagnostics are computed from the recent-transition buffer only
+- the first two eligible eval checkpoints are warmup-only and do not emit rows
+- `eval_index` starts at `0` on the first emitted post-warmup row
+- eval scheduling fires on the first step at-or-past each target interval, so non-divisible `eval_interval` values still work
+
+## Testing
+
+Always run:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Dependency-gated runtime tests can be run with the training environment:
+
+```bash
+./.venv/bin/python -m unittest tests.test_training_runtime -v
+```
+
+The heavy smoke test in `tests/test_training_smoke.py` is disabled by default and only runs when:
+
+```bash
+FINE_TUNE_STABILITY_RUN_TRAINING_SMOKE=1 python3 -m unittest tests.test_training_smoke -v
+```
+
+## Further Notes
+
+- Methodology details live in [`docs/methodology.md`](docs/methodology.md).
+- Brax integration assumptions and hook points live in [`docs/integration.md`](docs/integration.md).
+- Project-specific contributor guidance for agents and maintainers lives in [`AGENTS.md`](AGENTS.md).
