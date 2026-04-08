@@ -409,7 +409,7 @@ def _run_finetune_phase(
             pretrain=pretrain,
             run_finetune=run_finetune,
         )
-        for seed in tuple(int(seed) for seed in args.seed_values)
+        for seed in args.seed_values
     ]
 
 
