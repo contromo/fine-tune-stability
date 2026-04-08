@@ -447,10 +447,8 @@ def _build_actor_step_fn(make_policy):
 
 
 def _build_manual_reset_fn(env):
-    def maybe_reset(env_state, key):
+    def reset_done_envs(env_state, key):
         done = env_state.done
-        if not bool(np.asarray(jnp.any(done))):
-            return env_state
         reset_keys = jax.random.split(key, done.shape[0])
         reset_state = env.reset(reset_keys)
 
@@ -464,7 +462,15 @@ def _build_manual_reset_fn(env):
 
         return jax.tree_util.tree_map(where_done, reset_state, env_state)
 
-    return maybe_reset
+    def maybe_reset(env_state, key):
+        return jax.lax.cond(
+            jnp.any(env_state.done),
+            lambda carry: reset_done_envs(*carry),
+            lambda carry: carry[0],
+            (env_state, key),
+        )
+
+    return jax.jit(maybe_reset)
 
 
 def _make_losses(
