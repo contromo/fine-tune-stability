@@ -148,6 +148,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
     _save_checkpoint(
         config.checkpoint_dir(),
         config,
+        runtime["obs_size"],
         training_state,
         replay_state,
         replay_size=replay_size,
@@ -173,10 +174,14 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         raise ValueError("--checkpoint is required for fine-tuning")
     _ensure_output_dir(config.output_dir)
     checkpoint_payload = _load_checkpoint(config.checkpoint)
-    validate_checkpoint_compatibility(config, checkpoint_payload["metadata"])
-    _write_json(config.config_path(), config.to_dict())
-
     runtime = _build_runtime(config)
+    validate_checkpoint_compatibility(
+        config,
+        checkpoint_payload["metadata"],
+        observation_spec=runtime["obs_size"],
+        observation_dtype="float32",
+    )
+    _write_json(config.config_path(), config.to_dict())
     train_env = _build_env(config, batch_size=config.num_envs, domain="finetune")
     eval_env = _build_env(config, batch_size=config.eval_episodes, domain="finetune")
     evaluator = _build_evaluator(runtime, eval_env, config.eval_episodes)
@@ -186,6 +191,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     env_state = train_env.reset(jax.random.split(env_key, config.num_envs))
     training_state = checkpoint_payload["training_state"]
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
+    _validate_replay_state_compatibility(replay_state, checkpoint_payload["replay_state"])
     replay_state = checkpoint_payload["replay_state"]
 
     baseline_returns = _evaluate_policy(runtime, evaluator, training_state)["episode_returns"]
@@ -830,13 +836,24 @@ def _evaluate_policy(runtime: dict[str, Any], evaluator: acting.Evaluator, train
     }
 
 
-def _save_checkpoint(checkpoint_dir: Path, config: VerticalSliceConfig, training_state: TrainingState, replay_state, replay_size: int) -> None:
+def _save_checkpoint(
+    checkpoint_dir: Path,
+    config: VerticalSliceConfig,
+    observation_spec: Any,
+    training_state: TrainingState,
+    replay_state,
+    replay_size: int,
+) -> None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "created_at": _utc_now(),
         "metadata": {
             "run_id": config.run_id,
-            "signature": checkpoint_signature(config),
+            "signature": checkpoint_signature(
+                config,
+                observation_spec=observation_spec,
+                observation_dtype="float32",
+            ),
         },
         "training_state": _tree_to_numpy(training_state),
         "replay_state": _tree_to_numpy(replay_state),
@@ -863,6 +880,24 @@ def _tree_to_numpy(tree: Any) -> Any:
 
 def _tree_to_jax(tree: Any) -> Any:
     return jax.tree_util.tree_map(lambda value: jnp.asarray(value), tree)
+
+
+def _validate_replay_state_compatibility(expected_state: Any, restored_state: Any) -> None:
+    expected_flat, expected_treedef = jax.tree_util.tree_flatten(expected_state)
+    restored_flat, restored_treedef = jax.tree_util.tree_flatten(restored_state)
+    if expected_treedef != restored_treedef:
+        raise ValueError("Checkpoint replay state tree structure does not match the current replay buffer layout.")
+    for index, (expected_leaf, restored_leaf) in enumerate(zip(expected_flat, restored_flat)):
+        expected_shape = getattr(expected_leaf, "shape", None)
+        restored_shape = getattr(restored_leaf, "shape", None)
+        expected_dtype = getattr(expected_leaf, "dtype", None)
+        restored_dtype = getattr(restored_leaf, "dtype", None)
+        if expected_shape != restored_shape or expected_dtype != restored_dtype:
+            raise ValueError(
+                "Checkpoint replay state is incompatible with the current replay buffer layout: "
+                f"leaf {index} expected shape {expected_shape}, dtype {expected_dtype}; "
+                f"found shape {restored_shape}, dtype {restored_dtype}."
+            )
 
 
 def _write_json(path: Path, payload: Any) -> None:

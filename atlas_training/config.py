@@ -80,8 +80,13 @@ def build_run_id(stage: str, n_step: int, critic_width: int, seed: int) -> str:
     return f"{stage}_n{n_step}_c{critic_width}_seed{seed}"
 
 
-def checkpoint_signature(config: VerticalSliceConfig) -> Dict[str, Any]:
-    return {
+def checkpoint_signature(
+    config: VerticalSliceConfig,
+    *,
+    observation_spec: Any | None = None,
+    observation_dtype: str | None = None,
+) -> Dict[str, Any]:
+    signature = {
         "env_name": config.env_name,
         "n_step": config.n_step,
         "critic_width": config.critic_width,
@@ -89,14 +94,28 @@ def checkpoint_signature(config: VerticalSliceConfig) -> Dict[str, Any]:
         "actor_width": config.actor_width,
         "actor_depth": config.actor_depth,
         "gamma": config.gamma,
+        "batch_size": config.batch_size,
+        "replay_capacity": config.replay_capacity,
     }
+    if observation_spec is not None:
+        signature["observation_spec"] = observation_spec
+    if observation_dtype is not None:
+        signature["observation_dtype"] = observation_dtype
+    return signature
 
 
 def validate_checkpoint_compatibility(
     config: VerticalSliceConfig,
     metadata: Mapping[str, Any],
+    *,
+    observation_spec: Any | None = None,
+    observation_dtype: str | None = None,
 ) -> None:
-    expected = checkpoint_signature(config)
+    expected = checkpoint_signature(
+        config,
+        observation_spec=observation_spec,
+        observation_dtype=observation_dtype,
+    )
     actual = dict(metadata.get("signature", {}))
     mismatches = []
     for key, expected_value in expected.items():

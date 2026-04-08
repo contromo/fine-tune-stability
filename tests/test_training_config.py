@@ -18,13 +18,75 @@ class TrainingConfigTest(unittest.TestCase):
 
     def test_validate_checkpoint_compatibility(self) -> None:
         config = VerticalSliceConfig(stage="finetune", output_dir=Path("results"), n_step=3, critic_width=1024, seed=2)
-        metadata = {"signature": checkpoint_signature(config)}
-        validate_checkpoint_compatibility(config, metadata)
+        metadata = {
+            "signature": checkpoint_signature(
+                config,
+                observation_spec={"state": (48,), "privileged_state": (123,)},
+                observation_dtype="float32",
+            )
+        }
+        validate_checkpoint_compatibility(
+            config,
+            metadata,
+            observation_spec={"state": (48,), "privileged_state": (123,)},
+            observation_dtype="float32",
+        )
 
     def test_validate_checkpoint_compatibility_rejects_mismatch(self) -> None:
         config = VerticalSliceConfig(stage="finetune", output_dir=Path("results"), n_step=3, critic_width=1024, seed=2)
         with self.assertRaises(ValueError):
             validate_checkpoint_compatibility(config, {"signature": {"n_step": 1, "critic_width": 256}})
+
+    def test_checkpoint_signature_includes_replay_layout_fields(self) -> None:
+        config = VerticalSliceConfig(
+            stage="finetune",
+            output_dir=Path("results"),
+            batch_size=64,
+            replay_capacity=12345,
+        )
+        signature = checkpoint_signature(
+            config,
+            observation_spec={"state": (48,), "privileged_state": (123,)},
+            observation_dtype="float32",
+        )
+        self.assertEqual(signature["batch_size"], 64)
+        self.assertEqual(signature["replay_capacity"], 12345)
+        self.assertEqual(signature["observation_spec"], {"state": (48,), "privileged_state": (123,)})
+        self.assertEqual(signature["observation_dtype"], "float32")
+
+    def test_validate_checkpoint_compatibility_rejects_replay_layout_mismatch(self) -> None:
+        config = VerticalSliceConfig(
+            stage="finetune",
+            output_dir=Path("results"),
+            batch_size=64,
+            replay_capacity=1000,
+        )
+        metadata = {
+            "signature": checkpoint_signature(
+                config,
+                observation_spec={"state": (48,), "privileged_state": (123,)},
+                observation_dtype="float32",
+            )
+        }
+        with self.assertRaises(ValueError):
+            validate_checkpoint_compatibility(
+                VerticalSliceConfig(
+                    stage="finetune",
+                    output_dir=Path("results"),
+                    batch_size=32,
+                    replay_capacity=1000,
+                ),
+                metadata,
+                observation_spec={"state": (48,), "privileged_state": (123,)},
+                observation_dtype="float32",
+            )
+        with self.assertRaises(ValueError):
+            validate_checkpoint_compatibility(
+                config,
+                metadata,
+                observation_spec={"state": (64,), "privileged_state": (123,)},
+                observation_dtype="float32",
+            )
 
 
 if __name__ == "__main__":
