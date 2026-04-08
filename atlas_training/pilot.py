@@ -91,7 +91,7 @@ def classify_pilot_gate(seed_results: Sequence[dict[str, Any]], sweep_hours_cons
 
     if len(usable) < 2:
         reasons.append("fewer than 2 fine-tune seeds produced at least 3 post-warmup eval rows")
-    if any(bool(result.get("has_nonfinite_metrics")) for result in seed_results):
+    if any(bool(result.get("has_nonfinite_metrics")) for result in usable):
         reasons.append("non-finite baseline or diagnostic metrics were observed")
     if not math.isfinite(sweep_hours_conservative) or sweep_hours_conservative > CONSERVATIVE_SWEEP_HOURS_CEILING:
         reasons.append(

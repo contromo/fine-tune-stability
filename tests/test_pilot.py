@@ -82,6 +82,18 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(decision, "proceed")
         self.assertTrue(reasons)
 
+    def test_gate_classification_proceed_with_one_error_seed(self) -> None:
+        decision, reasons = classify_pilot_gate(
+            [
+                {"usable": True, "drop_fraction": 0.2, "threshold_drop_fraction": 0.3, "has_nonfinite_metrics": False},
+                {"usable": True, "drop_fraction": 0.35, "threshold_drop_fraction": 0.4, "has_nonfinite_metrics": False},
+                {"usable": False, "status": "error", "has_nonfinite_metrics": True},
+            ],
+            100.0,
+        )
+        self.assertEqual(decision, "proceed")
+        self.assertTrue(reasons)
+
     def test_gate_classification_adjust(self) -> None:
         decision, reasons = classify_pilot_gate(
             [
