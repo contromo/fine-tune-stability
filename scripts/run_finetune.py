@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fine-tune a pretrained Go1 SAC checkpoint under the shifted domain.")
     parser.add_argument("--checkpoint", type=Path, required=True)
     add_common_cli_args(parser, output_dir_default=Path("results/runs/finetune_go1"))
+    parser.add_argument("--baseline-eval-episodes", type=int, default=None)
     parser.add_argument("--stop-on-collapse", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 

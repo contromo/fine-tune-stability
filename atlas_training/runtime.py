@@ -5,6 +5,7 @@ import functools
 import json
 import random
 import statistics
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -42,6 +43,7 @@ from atlas_training.diagnostics import (
     mark_eval_row_emitted,
     record_warmup_variance,
 )
+from atlas_training.util import hours_per_100m, summarize_throughput_rates, write_json
 
 FLOOR_GEOM_ID = 0
 TORSO_BODY_ID = 1
@@ -101,6 +103,7 @@ def run_finetune_cli(args: argparse.Namespace) -> None:
         eval_interval=args.eval_interval,
         num_envs=args.num_envs,
         eval_episodes=args.eval_episodes,
+        baseline_eval_episodes=args.baseline_eval_episodes,
         batch_size=args.batch_size,
         replay_capacity=args.replay_capacity,
         min_replay_size=args.min_replay_size,
@@ -117,9 +120,10 @@ def run_finetune_cli(args: argparse.Namespace) -> None:
 
 
 def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
+    start_time = time.perf_counter()
     config = config.with_run_id()
     _ensure_output_dir(config.output_dir)
-    _write_json(config.config_path(), config.to_dict())
+    write_json(config.config_path(), config.to_dict())
 
     runtime = _build_runtime(config)
     train_env = _build_env(config, batch_size=config.num_envs, domain="pretrain")
@@ -163,14 +167,21 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
         "final_env_steps": env_steps,
         "final_eval_return_mean": nominal_metrics["return_mean"],
         "final_eval_return_std": nominal_metrics["return_std"],
+        "throughput_scope": "wallclock_inclusive",
+        "throughput_notes": [
+            "steps_per_second includes runtime construction, the final evaluation pass, and checkpoint serialization",
+        ],
         "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
     }
-    _write_json(config.summary_path(), summary)
+    summary["wallclock_seconds"] = round(time.perf_counter() - start_time, 6)
+    summary["steps_per_second"] = _steps_per_second(env_steps, summary["wallclock_seconds"])
+    write_json(config.summary_path(), summary)
     return summary
 
 
 def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
+    start_time = time.perf_counter()
     config = config.with_run_id()
     if config.checkpoint is None:
         raise ValueError("--checkpoint is required for fine-tuning")
@@ -183,10 +194,9 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         observation_spec=runtime["obs_size"],
         observation_dtype="float32",
     )
-    _write_json(config.config_path(), config.to_dict())
+    write_json(config.config_path(), config.to_dict())
     train_env = _build_env(config, batch_size=config.num_envs, domain="finetune")
-    eval_env = _build_env(config, batch_size=config.eval_episodes, domain="finetune")
-    evaluator = _build_evaluator(runtime, eval_env, config.eval_episodes)
+    baseline_evaluator, evaluator = _build_finetune_evaluators(runtime, config)
 
     key = jax.random.PRNGKey(config.seed)
     key, env_key, state_key = jax.random.split(key, 3)
@@ -200,13 +210,14 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         flax_serialization.from_state_dict(replay_state, checkpoint_payload["replay_state"])
     )
 
-    baseline_returns = _evaluate_policy(runtime, evaluator, training_state)["episode_returns"]
+    baseline_returns = _evaluate_policy(runtime, baseline_evaluator, training_state)["episode_returns"]
     baseline = freeze_baseline(baseline_returns)
-    _write_json(
+    write_json(
         config.pretrain_baseline_path(),
         {
             "created_at": _utc_now(),
             "run_id": config.run_id,
+            "baseline_eval_episodes": config.effective_baseline_eval_episodes(),
             "mu0": baseline.mu0,
             "sigma0": baseline.sigma0,
             "threshold": baseline.threshold,
@@ -239,10 +250,150 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         "final_env_steps": env_steps,
         "collapsed": collapsed,
         "threshold": baseline.threshold,
+        "baseline_eval_episodes": config.effective_baseline_eval_episodes(),
+        "throughput_scope": "wallclock_inclusive",
+        "throughput_notes": [
+            "steps_per_second includes checkpoint restore, baseline evaluation, eval callbacks during training, and summary serialization",
+        ],
         "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
     }
-    _write_json(config.summary_path(), summary)
+    summary["wallclock_seconds"] = round(time.perf_counter() - start_time, 6)
+    summary["steps_per_second"] = _steps_per_second(env_steps, summary["wallclock_seconds"])
+    write_json(config.summary_path(), summary)
+    return summary
+
+
+def run_throughput_probe(
+    config: VerticalSliceConfig,
+    *,
+    updates_per_window: int,
+    timed_update_windows: int = 3,
+) -> dict[str, Any]:
+    if updates_per_window <= 0:
+        raise ValueError("updates_per_window must be positive")
+    if timed_update_windows <= 0:
+        raise ValueError("timed_update_windows must be positive")
+
+    start_time = time.perf_counter()
+    config = config.with_run_id()
+    _ensure_output_dir(config.output_dir)
+    write_json(
+        config.config_path(),
+        {
+            **config.to_dict(),
+            "timed_update_windows": timed_update_windows,
+            "updates_per_window": updates_per_window,
+        },
+    )
+
+    runtime = _build_runtime(config)
+    train_env = _build_env(config, batch_size=config.num_envs, domain="finetune")
+
+    key = jax.random.PRNGKey(config.seed)
+    key, env_key, state_key = jax.random.split(key, 3)
+    env_state = train_env.reset(jax.random.split(env_key, config.num_envs))
+    training_state = _init_training_state(state_key, runtime, config)
+    replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
+
+    aggregator = MultiStreamNStepAggregator(n_step=config.n_step, gamma=config.gamma)
+    manual_reset_fn = _build_manual_reset_fn(train_env)
+    update_step_fn = _build_update_step_fn(runtime, replay_buffer, config)
+    replay_size = 0
+    env_steps = 0
+    metrics: dict[str, Any] = {}
+    total_updates = 0
+    timed_windows: list[dict[str, float | int]] = []
+    current_window_updates = 0
+    current_window_start_time: float | None = None
+    current_window_start_env_steps = 0
+    timing_started = False
+
+    while len(timed_windows) < timed_update_windows:
+        key, actor_key, reset_key = jax.random.split(key, 3)
+        env_state, one_step_transition = runtime["actor_step_fn"](
+            training_state.normalizer_params,
+            training_state.policy_params,
+            train_env,
+            env_state,
+            actor_key,
+        )
+        training_state = _update_normalizer_from_transition(training_state, runtime, one_step_transition)
+
+        emitted = _aggregate_transitions(one_step_transition, config.gamma, aggregator)
+        if emitted:
+            replay_state = replay_buffer.insert(replay_state, _to_brax_transition_batch(emitted, config.gamma))
+            replay_size = min(config.replay_capacity, replay_size + len(emitted))
+        env_state = manual_reset_fn(env_state, reset_key)
+        env_steps += config.num_envs * config.action_repeat
+
+        if replay_size < config.min_replay_size:
+            continue
+
+        for _update in range(config.grad_updates_per_step):
+            key, update_key = jax.random.split(key)
+            training_state, replay_state, metrics = update_step_fn(training_state, replay_state, update_key)
+            total_updates += 1
+
+            if not timing_started:
+                timing_started = True
+                current_window_start_time = time.perf_counter()
+                current_window_start_env_steps = env_steps
+                current_window_updates = 0
+                continue
+
+            current_window_updates += 1
+            if current_window_updates < updates_per_window:
+                continue
+
+            assert current_window_start_time is not None
+            elapsed = time.perf_counter() - current_window_start_time
+            window_env_steps = env_steps - current_window_start_env_steps
+            window_steps_per_second = 0.0 if elapsed <= 0 else window_env_steps / elapsed
+            timed_windows.append(
+                {
+                    "window_index": len(timed_windows),
+                    "updates": current_window_updates,
+                    "env_steps": window_env_steps,
+                    "wallclock_seconds": round(elapsed, 6),
+                    "steps_per_second": round(window_steps_per_second, 6),
+                }
+            )
+            current_window_updates = 0
+            current_window_start_time = time.perf_counter()
+            current_window_start_env_steps = env_steps
+
+    window_rates = [float(window["steps_per_second"]) for window in timed_windows]
+    throughput_stats = summarize_throughput_rates(window_rates)
+    summary = {
+        "stage": config.stage,
+        "created_at": _utc_now(),
+        "run_id": config.run_id,
+        "final_env_steps": env_steps,
+        "wallclock_seconds": round(time.perf_counter() - start_time, 6),
+        "steps_per_second": round(throughput_stats["steps_per_second_mean"], 6),
+        "hours_per_100m": round(throughput_stats["hours_per_100m_mean"], 6),
+        "throughput_scope": "steady_state_training_only",
+        "throughput_notes": [
+            "steps_per_second is measured after replay warmup and after the first compiled update completes",
+            "window measurements exclude runtime construction and untimed warmup iterations",
+            "hours_per_100m is the mean of per-window hour estimates, not the reciprocal of the mean rate",
+        ],
+        "training_metrics": metrics,
+        "timed_update_windows": timed_update_windows,
+        "updates_per_window": updates_per_window,
+        "total_updates": total_updates,
+        "throughput_window_stats": {
+            "steps_per_second_mean": round(throughput_stats["steps_per_second_mean"], 6),
+            "steps_per_second_min": round(throughput_stats["steps_per_second_min"], 6),
+            "steps_per_second_max": round(throughput_stats["steps_per_second_max"], 6),
+            "hours_per_100m_mean": round(throughput_stats["hours_per_100m_mean"], 6),
+            "hours_per_100m_min": round(throughput_stats["hours_per_100m_min"], 6),
+            "hours_per_100m_max": round(throughput_stats["hours_per_100m_max"], 6),
+        },
+        "window_measurements": timed_windows,
+    }
+    write_json(config.summary_path(), summary)
     return summary
 
 
@@ -524,6 +675,25 @@ def _make_losses(
     return alpha_loss, critic_loss, actor_loss
 
 
+def _update_normalizer_from_transition(
+    training_state: TrainingState,
+    runtime: dict[str, Any],
+    one_step_transition,
+) -> TrainingState:
+    observations = (
+        {"state": _policy_observation(one_step_transition.observation)}
+        if isinstance(runtime["obs_size"], dict)
+        else _policy_observation(one_step_transition.observation)
+    )
+    return training_state.replace(
+        normalizer_params=running_statistics.update(
+            training_state.normalizer_params,
+            observations,
+            pmap_axis_name=None,
+        )
+    )
+
+
 def _run_training_loop(
     *,
     config: VerticalSliceConfig,
@@ -569,15 +739,7 @@ def _run_training_loop(
                 env_state,
                 actor_key,
             )
-            training_state = training_state.replace(
-                normalizer_params=running_statistics.update(
-                    training_state.normalizer_params,
-                    {"state": _policy_observation(one_step_transition.observation)}
-                    if isinstance(runtime["obs_size"], dict)
-                    else _policy_observation(one_step_transition.observation),
-                    pmap_axis_name=None,
-                )
-            )
+            training_state = _update_normalizer_from_transition(training_state, runtime, one_step_transition)
 
             emitted = _aggregate_transitions(one_step_transition, config.gamma, aggregator)
             if emitted:
@@ -866,6 +1028,17 @@ def _build_evaluator(runtime: dict[str, Any], eval_env, num_eval_envs: int) -> a
     )
 
 
+def _build_finetune_evaluators(runtime: dict[str, Any], config: VerticalSliceConfig) -> tuple[acting.Evaluator, acting.Evaluator]:
+    eval_env = _build_env(config, batch_size=config.eval_episodes, domain="finetune")
+    regular_evaluator = _build_evaluator(runtime, eval_env, config.eval_episodes)
+    if not config.uses_separate_baseline_evaluator():
+        return regular_evaluator, regular_evaluator
+    baseline_eval_episodes = config.effective_baseline_eval_episodes()
+    baseline_env = _build_env(config, batch_size=baseline_eval_episodes, domain="finetune")
+    baseline_evaluator = _build_evaluator(runtime, baseline_env, baseline_eval_episodes)
+    return baseline_evaluator, regular_evaluator
+
+
 def _evaluate_policy(runtime: dict[str, Any], evaluator: acting.Evaluator, training_state: TrainingState) -> dict[str, Any]:
     # Brax's public Evaluator API only exposes aggregated metrics; this vertical slice
     # needs per-episode returns, so it relies on 0.14.x private evaluator internals.
@@ -938,26 +1111,15 @@ def _tree_to_jax(tree: Any) -> Any:
     return jax.tree_util.tree_map(lambda value: jnp.asarray(value), tree)
 
 
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_ready(payload), indent=2) + "\n", encoding="utf-8")
-
-
-def _json_ready(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {key: _json_ready(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, list):
-        return [_json_ready(item) for item in value]
-    return value
-
-
 def _ensure_output_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _steps_per_second(env_steps: int, wallclock_seconds: float) -> float:
+    if wallclock_seconds <= 0:
+        return 0.0
+    return round(env_steps / wallclock_seconds, 6)

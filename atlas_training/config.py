@@ -25,6 +25,7 @@ class VerticalSliceConfig:
     eval_interval: int = 100_000
     num_envs: int = 32
     eval_episodes: int = 10
+    baseline_eval_episodes: int | None = None
     gamma: float = 0.99
     learning_rate: float = 3e-4
     batch_size: int = 256
@@ -70,6 +71,12 @@ class VerticalSliceConfig:
     def eval_log_path(self) -> Path:
         return self.output_dir / "eval_log.jsonl"
 
+    def effective_baseline_eval_episodes(self) -> int:
+        return self.eval_episodes if self.baseline_eval_episodes is None else self.baseline_eval_episodes
+
+    def uses_separate_baseline_evaluator(self) -> bool:
+        return self.effective_baseline_eval_episodes() != self.eval_episodes
+
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data["output_dir"] = str(self.output_dir)
@@ -105,6 +112,26 @@ def add_common_cli_args(
     parser.add_argument("--episode-length", type=int, default=1000)
     parser.add_argument("--action-repeat", type=int, default=1)
     return parser
+
+
+def add_shift_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    default_shift = default_shift_spec()
+    parser.add_argument("--train-friction-min", type=float, default=default_shift.train_friction_range[0])
+    parser.add_argument("--train-friction-max", type=float, default=default_shift.train_friction_range[1])
+    parser.add_argument("--train-payload-min", type=float, default=default_shift.train_payload_range[0])
+    parser.add_argument("--train-payload-max", type=float, default=default_shift.train_payload_range[1])
+    parser.add_argument("--fine-tune-friction", type=float, default=default_shift.fine_tune_friction)
+    parser.add_argument("--fine-tune-payload", type=float, default=default_shift.fine_tune_payload)
+    return parser
+
+
+def shift_from_args(args: argparse.Namespace) -> ShiftSpec:
+    return ShiftSpec(
+        train_friction_range=(args.train_friction_min, args.train_friction_max),
+        train_payload_range=(args.train_payload_min, args.train_payload_max),
+        fine_tune_friction=args.fine_tune_friction,
+        fine_tune_payload=args.fine_tune_payload,
+    )
 
 
 def _normalize_nested_spec(value: Any) -> Any:

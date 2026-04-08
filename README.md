@@ -13,7 +13,7 @@ The current implementation is designed to answer one concrete question well: can
 - recent-transition diagnostics based on TD-error variance and q95
 - collapse-threshold utilities and warning-score logic
 - a one-cell Brax/MuJoCo Playground training slice for `Go1JoystickFlatTerrain`
-- reproducible runner scripts for pretrain, fine-tune, sweep manifest generation, and diagnostic summarization
+- reproducible runner scripts for pretrain, fine-tune, pilot calibration, sweep manifest generation, and diagnostic summarization
 
 ## Repo Layout
 
@@ -77,6 +77,14 @@ python3 scripts/run_finetune.py \
   --output-dir results/runs/finetune_go1
 ```
 
+Run the pilot calibration gate with a shared pretrain, three fine-tune seeds, and one extremal throughput probe:
+
+```bash
+python3 scripts/run_pilot.py \
+  --output-dir results/runs/pilot_gate \
+  --pretrain-steps 1000000
+```
+
 Summarize diagnostic logs:
 
 ```bash
@@ -108,7 +116,15 @@ Fine-tune writes:
 - `results/runs/<run_id>/eval_log.jsonl`
 - `results/runs/<run_id>/summary.json`
 
+Pilot writes:
+
+- `results/runs/<pilot_id>/pilot_report.json`
+- `results/runs/<pilot_id>/shared_pretrain/...`
+- `results/runs/<pilot_id>/seed_<seed>/...`
+- `results/runs/<pilot_id>/extreme_probe/summary.json`
+
 `summary.json` includes `warning_triggered` as a convenience summary field. The canonical per-eval warning signal remains `score` in `eval_log.jsonl`.
+`pilot_report.json` includes an explicit `proceed`, `adjust`, or `fail` gate decision plus the shared-pretrain caveat and conservative sweep budget bound.
 
 ## Important Runtime Conventions
 
@@ -146,6 +162,8 @@ The heavy smoke test in `tests/test_training_smoke.py` is disabled by default an
 ```bash
 FINE_TUNE_STABILITY_RUN_TRAINING_SMOKE=1 python3 -m unittest tests.test_training_smoke -v
 ```
+
+That smoke now covers both the original vertical slice and a tiny pilot run, including the shared pretrain, one fine-tune seed, and the extremal throughput probe.
 
 ## Further Notes
 

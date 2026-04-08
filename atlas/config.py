@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Dict, Iterable, List, Sequence, Tuple
 
+from atlas.diagnostics import DEFAULT_TRIGGER_THRESHOLD
+
 
 @dataclass(frozen=True)
 class NetworkShape:
@@ -42,7 +44,7 @@ class AtlasHyperparameters:
     collapse_c: float = 2.0
     collapse_rho: float = 0.2
     diagnostics_window: int = 100
-    trigger_threshold: float = 1.0986122886681098
+    trigger_threshold: float = DEFAULT_TRIGGER_THRESHOLD
     trigger_hold_evals: int = 2
     prediction_horizon_evals: int = 10
     total_fine_tune_steps: int = 100_000_000
