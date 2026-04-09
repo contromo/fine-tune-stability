@@ -66,6 +66,7 @@ Useful overrides:
 python3 scripts/run_pilot.py \
   --profile production \
   --output-dir results/runs/pilot_gate_alt \
+  --decision-dir docs/decisions \
   --pretrain-steps 500000 \
   --fine-tune-steps 1000000
 ```
@@ -84,7 +85,7 @@ Pilot artifacts live under `results/runs/<pilot_id>/`:
 - `extreme_probe/summary.json`
 
 `pilot_report.json` embeds a stable `environment` block plus `preflight_path`. `pilot.log` appends a timestamped header on each attempt so interrupted reruns are visible in one file.
-A durable decision stub is also written to `docs/decisions/YYYY-MM-DD-<run_id>.md`. Edit and commit that file after reviewing the pilot.
+A durable decision stub is also written to `docs/decisions/YYYY-MM-DD-<run_id>.md` by default. Override the location with `--decision-dir` if the pilot is being orchestrated outside the repo checkout.
 If the decision file already exists and has been edited, rerunning with the same date and `run_id` fails; use a different `run_id` or clean up the old note first.
 
 ## 6. Interruption semantics

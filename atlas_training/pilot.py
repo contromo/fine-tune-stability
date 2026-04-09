@@ -41,9 +41,7 @@ THRESHOLD_DROP_FRACTION_MAX = 0.50
 EPSILON = 1e-8
 DECISION_NOTE_MARKER = "<!-- AUTO-GENERATED PILOT DECISION STUB: SAFE TO OVERWRITE UNTIL NEXT ACTION IS EDITED -->"
 DECISION_NOTE_PLACEHOLDER = "- TODO: replace with the chosen next action before committing."
-# TODO: if pilot orchestration is ever run from an installed wheel instead of the repo checkout,
-# route decision-note output through an explicit configurable base path.
-REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DECISION_DIR = Path(__file__).resolve().parents[1] / "docs" / "decisions"
 
 
 @dataclass(frozen=True)
@@ -239,15 +237,17 @@ def count_eval_rows(eval_log_path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
-def _decision_note_path(run_id: str, created_at: datetime | None = None) -> Path:
+def _decision_note_path(run_id: str, decision_dir: Path, created_at: datetime | None = None) -> Path:
     timestamp = datetime.now(timezone.utc) if created_at is None else created_at
-    return REPO_ROOT / "docs" / "decisions" / f"{timestamp.date().isoformat()}-{run_id}.md"
+    return decision_dir / f"{timestamp.date().isoformat()}-{run_id}.md"
 
 
 def _can_overwrite_decision_note(path: Path) -> bool:
     if not path.exists():
         return True
     contents = path.read_text(encoding="utf-8")
+    # Only auto-overwrite the untouched stub. If either sentinel is missing,
+    # assume a human has taken ownership of the file.
     return DECISION_NOTE_MARKER in contents and DECISION_NOTE_PLACEHOLDER in contents
 
 
@@ -317,6 +317,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--profile", choices=(DEFAULT_PROFILE, PRODUCTION_PROFILE), default=pre_parsed.profile)
     parser.add_argument("--output-dir", type=Path, default=profile_defaults.get("output_dir", Path("results/runs/pilot_gate")))
     parser.add_argument("--run-id", type=str, default=profile_defaults.get("run_id", "pilot_gate"))
+    parser.add_argument(
+        "--decision-dir",
+        type=Path,
+        default=DEFAULT_DECISION_DIR,
+        help="directory for the generated decision note (defaults to the repo's docs/decisions directory)",
+    )
     parser.add_argument("--env-name", type=str, default="Go1JoystickFlatTerrain")
     parser.add_argument("--pretrain-seed", type=int, default=0)
     parser.add_argument("--seeds", type=str, default=profile_defaults.get("seeds", "0,1,2"))
@@ -723,7 +729,7 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
     layout = build_pilot_layout(args.output_dir, seed_values)
     shift = shift_from_args(args)
     created_at = datetime.now(timezone.utc)
-    decision_note_path = _decision_note_path(args.run_id, created_at=created_at)
+    decision_note_path = _decision_note_path(args.run_id, args.decision_dir, created_at=created_at)
 
     if not args.preflight_only:
         _ensure_decision_note_can_be_written(decision_note_path)

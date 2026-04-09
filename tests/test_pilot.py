@@ -10,6 +10,7 @@ from atlas_training.config import VerticalSliceConfig, shift_from_args
 from atlas_training.pilot import (
     DECISION_NOTE_MARKER,
     DECISION_NOTE_PLACEHOLDER,
+    DEFAULT_DECISION_DIR,
     DEFAULT_FINE_TUNE_STEPS,
     DEFAULT_PRODUCTION_PRETRAIN_STEPS,
     ProbePhaseResult,
@@ -58,6 +59,7 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(args.seed_values, (0, 1, 2))
         self.assertEqual(args.fine_tune_steps, DEFAULT_FINE_TUNE_STEPS)
         self.assertEqual(args.baseline_eval_episodes, 50)
+        self.assertEqual(args.decision_dir, DEFAULT_DECISION_DIR)
 
     def test_parse_args_uses_production_profile_defaults(self) -> None:
         args = parse_args(["--profile", "production"])
@@ -109,6 +111,8 @@ class PilotTest(unittest.TestCase):
                 "production",
                 "--pretrain-steps",
                 "123",
+                "--decision-dir",
+                "/tmp/pilot-decisions",
                 "--num-envs",
                 "8",
                 "--collapse-c",
@@ -118,6 +122,7 @@ class PilotTest(unittest.TestCase):
             ]
         )
         self.assertEqual(args.pretrain_steps, 123)
+        self.assertEqual(args.decision_dir, Path("/tmp/pilot-decisions"))
         self.assertEqual(args.num_envs, 8)
         self.assertEqual(args.collapse_c, 1.5)
         self.assertEqual(args.collapse_rho, 0.1)
@@ -472,8 +477,8 @@ class PilotTest(unittest.TestCase):
             _ensure_phase_can_run("shared_pretrain", summary_path, force=True)
 
     def test_decision_note_path_uses_utc_date_and_run_id(self) -> None:
-        note_path = _decision_note_path("pilot_gate")
-        self.assertEqual(note_path.parent, Path(__file__).resolve().parents[1] / "docs" / "decisions")
+        note_path = _decision_note_path("pilot_gate", Path("docs/decisions"))
+        self.assertEqual(note_path.parent, Path("docs/decisions"))
         self.assertTrue(note_path.name.endswith("-pilot_gate.md"))
 
     def test_decision_note_creation_and_template_overwrite(self) -> None:
