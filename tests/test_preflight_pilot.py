@@ -92,9 +92,12 @@ class PreflightPilotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
             "atlas_training.preflight._package_versions",
             return_value=self._base_versions(),
-        ), mock.patch("atlas_training.preflight.importlib.import_module", return_value=fake_jax), mock.patch(
+        ), mock.patch(
             "atlas_training.preflight.shutil.disk_usage",
             return_value=disk_usage,
+        ), mock.patch(
+            "atlas_training.preflight.importlib.import_module",
+            return_value=fake_jax,
         ):
             payload = collect_preflight(
                 output_dir=Path(tmpdir),
@@ -124,9 +127,12 @@ class PreflightPilotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
             "atlas_training.preflight._package_versions",
             return_value=self._base_versions(),
-        ), mock.patch("atlas_training.preflight.importlib.import_module", return_value=fake_jax), mock.patch(
+        ), mock.patch(
             "atlas_training.preflight._git_commit",
             return_value=None,
+        ), mock.patch(
+            "atlas_training.preflight.importlib.import_module",
+            return_value=fake_jax,
         ):
             payload = collect_preflight(
                 output_dir=Path(tmpdir),
@@ -140,9 +146,12 @@ class PreflightPilotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
             "atlas_training.preflight._package_versions",
             return_value=self._base_versions(),
-        ), mock.patch("atlas_training.preflight.importlib.import_module", return_value=fake_jax), mock.patch(
+        ), mock.patch(
             "atlas_training.preflight._memory_report",
             return_value={"status": "error", "message": "boom"},
+        ), mock.patch(
+            "atlas_training.preflight.importlib.import_module",
+            return_value=fake_jax,
         ):
             payload = collect_preflight(
                 output_dir=Path(tmpdir),
@@ -156,9 +165,12 @@ class PreflightPilotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
             "atlas_training.preflight._package_versions",
             return_value=self._base_versions(),
-        ), mock.patch("atlas_training.preflight.importlib.import_module", return_value=fake_jax), mock.patch(
+        ), mock.patch(
             "atlas_training.preflight._ensure_output_dir_writable",
             side_effect=PermissionError("read-only"),
+        ), mock.patch(
+            "atlas_training.preflight.importlib.import_module",
+            return_value=fake_jax,
         ):
             payload = collect_preflight(
                 output_dir=Path(tmpdir),
