@@ -15,6 +15,9 @@ class FrozenBaseline:
     mu0: float
     sigma0: float
     threshold: float
+    collapse_c: float
+    collapse_rho: float
+    threshold_rule: str
 
 
 @dataclass(frozen=True)
@@ -58,7 +61,18 @@ def freeze_baseline(
         raise ValueError("returns must not be empty")
     mu0 = statistics.mean(returns)
     sigma0 = statistics.pstdev(returns)
-    return FrozenBaseline(mu0=mu0, sigma0=sigma0, threshold=collapse_threshold(mu0, sigma0, c=c, rho=rho))
+    sigma_rule = mu0 - (c * sigma0)
+    floor_rule = mu0 - (rho * abs(mu0))
+    threshold = collapse_threshold(mu0, sigma0, c=c, rho=rho)
+    threshold_rule = "sigma" if sigma_rule <= floor_rule else "floor"
+    return FrozenBaseline(
+        mu0=mu0,
+        sigma0=sigma0,
+        threshold=threshold,
+        collapse_c=c,
+        collapse_rho=rho,
+        threshold_rule=threshold_rule,
+    )
 
 
 def current_warmup_variance(state: DiagnosticLogState) -> float | None:

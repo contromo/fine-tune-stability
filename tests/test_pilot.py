@@ -7,12 +7,17 @@ from pathlib import Path
 
 from atlas_training.config import VerticalSliceConfig, shift_from_args
 from atlas_training.pilot import (
+    DECISION_NOTE_MARKER,
+    DECISION_NOTE_PLACEHOLDER,
     DEFAULT_FINE_TUNE_STEPS,
     DEFAULT_PRODUCTION_PRETRAIN_STEPS,
     ProbePhaseResult,
     PretrainPhaseResult,
     _build_pilot_report,
+    _decision_note_path,
+    _ensure_phase_can_run,
     _run_finetune_seed,
+    _write_decision_note,
     build_pilot_layout,
     build_budget_summary,
     classify_pilot_gate,
@@ -59,6 +64,7 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(args.pretrain_steps, DEFAULT_PRODUCTION_PRETRAIN_STEPS)
         self.assertEqual(args.num_envs, 32)
         self.assertTrue(args.stop_on_collapse)
+        self.assertFalse(args.force)
 
     def test_parse_args_preflight_only_uses_production_output_dir(self) -> None:
         args = parse_args(["--profile", "production", "--preflight-only"])
@@ -96,9 +102,24 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(run_preflight_mock.call_args.kwargs["preflight_path"], Path("results/runs/pilot_gate/preflight.json"))
 
     def test_parse_args_profile_defaults_can_be_overridden_explicitly(self) -> None:
-        args = parse_args(["--profile", "production", "--pretrain-steps", "123", "--num-envs", "8"])
+        args = parse_args(
+            [
+                "--profile",
+                "production",
+                "--pretrain-steps",
+                "123",
+                "--num-envs",
+                "8",
+                "--collapse-c",
+                "1.5",
+                "--collapse-rho",
+                "0.1",
+            ]
+        )
         self.assertEqual(args.pretrain_steps, 123)
         self.assertEqual(args.num_envs, 8)
+        self.assertEqual(args.collapse_c, 1.5)
+        self.assertEqual(args.collapse_rho, 0.1)
 
     def test_parse_args_rejects_too_short_finetune_horizon(self) -> None:
         with self.assertRaises(ValueError):
@@ -159,6 +180,32 @@ class PilotTest(unittest.TestCase):
                     "255",
                 ]
             )
+
+    def test_parse_args_accepts_documented_gpu_smoke_command(self) -> None:
+        args = parse_args(
+            [
+                "--profile",
+                "production",
+                "--run-id",
+                "pilot_gpu_smoke",
+                "--output-dir",
+                "results/runs/pilot_gpu_smoke",
+                "--seeds",
+                "0,1",
+                "--pretrain-steps",
+                "50000",
+                "--eval-interval",
+                "10000",
+                "--fine-tune-steps",
+                "50016",
+                "--baseline-eval-episodes",
+                "10",
+                "--throughput-probe-updates",
+                "50",
+            ]
+        )
+        self.assertEqual(args.seed_values, (0, 1))
+        self.assertEqual(args.fine_tune_steps, 50016)
 
     def test_hours_per_100m_budget_math(self) -> None:
         self.assertAlmostEqual(hours_per_100m(10_000.0), 2.7777777777777777)
@@ -239,6 +286,7 @@ class PilotTest(unittest.TestCase):
             shift,
             layout.output_dir / "preflight.json",
             preflight,
+            Path(__file__).resolve().parents[1] / "docs" / "decisions" / "2026-04-09-pilot_gate.md",
             pretrain,
             seed_results,
             probe,
@@ -248,11 +296,16 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(report["budget"]["sweep_hours_conservative"], float("inf"))
         self.assertEqual(report["preflight_path"], layout.output_dir / "preflight.json")
         self.assertEqual(
+            report["artifacts"]["decision_note"],
+            Path(__file__).resolve().parents[1] / "docs" / "decisions" / "2026-04-09-pilot_gate.md",
+        )
+        self.assertEqual(
             set(report["environment"].keys()),
             {"hostname", "platform", "python_version", "git_commit", "jax_backend", "jax_devices", "packages"},
         )
         self.assertEqual(report["environment"]["jax_backend"], "gpu")
         self.assertEqual(report["environment"]["packages"]["mujoco_mjx"], "3.6.0")
+        self.assertEqual(report["threshold_calibration"], {"collapse_c": 2.0, "collapse_rho": 0.2})
 
     def test_run_finetune_seed_rewrites_summary_after_diagnostic_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -271,7 +324,14 @@ class PilotTest(unittest.TestCase):
             def fake_run_finetune(config: VerticalSliceConfig) -> dict[str, float | bool]:
                 util_write_json(
                     config.pretrain_baseline_path(),
-                    {"mu0": 8.0, "sigma0": 1.0, "threshold": 6.0},
+                    {
+                        "mu0": 8.0,
+                        "sigma0": 1.0,
+                        "threshold": 6.0,
+                        "collapse_c": 2.0,
+                        "collapse_rho": 0.2,
+                        "threshold_rule": "sigma",
+                    },
                 )
                 config.eval_log_path().parent.mkdir(parents=True, exist_ok=True)
                 config.eval_log_path().write_text(
@@ -321,6 +381,9 @@ class PilotTest(unittest.TestCase):
 
             self.assertEqual(result["status"], "ok")
             self.assertEqual(events[-2:], ["diagnostic_summary.json", "summary.json"])
+            self.assertEqual(result["collapse_c"], 2.0)
+            self.assertEqual(result["collapse_rho"], 0.2)
+            self.assertEqual(result["threshold_rule"], "sigma")
 
     def test_drop_fraction_handles_negative_nominal_mean(self) -> None:
         self.assertAlmostEqual(drop_fraction(-10.0, -5.0), -0.5)
@@ -391,6 +454,74 @@ class PilotTest(unittest.TestCase):
         )
         self.assertEqual(decision, "fail")
         self.assertTrue(reasons)
+
+    def test_phase_guard_refuses_completed_phase_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "summary.json"
+            summary_path.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(FileExistsError, "shared_pretrain is already complete"):
+                _ensure_phase_can_run("shared_pretrain", summary_path, force=False)
+
+    def test_phase_guard_allows_force_for_completed_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "summary.json"
+            summary_path.write_text("{}", encoding="utf-8")
+            _ensure_phase_can_run("shared_pretrain", summary_path, force=True)
+
+    def test_decision_note_path_uses_utc_date_and_run_id(self) -> None:
+        note_path = _decision_note_path("pilot_gate")
+        self.assertEqual(note_path.parent, Path(__file__).resolve().parents[1] / "docs" / "decisions")
+        self.assertTrue(note_path.name.endswith("-pilot_gate.md"))
+
+    def test_decision_note_creation_and_template_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            note_path = Path(tmpdir) / "2026-04-09-pilot_gate.md"
+            report = {
+                "created_at": "2026-04-09T00:00:00+00:00",
+                "pilot_id": "pilot_gate",
+                "decision": "adjust",
+                "artifacts": {"report": Path("results/runs/pilot_gate/pilot_report.json")},
+                "budget": {"sweep_hours_conservative": 120.0, "sweep_hours_optimistic": 80.0},
+                "representative_cell": {
+                    "drop_fraction_stats": {"mean": 0.2, "min": 0.1, "max": 0.3},
+                    "threshold_drop_fraction_stats": {"mean": 0.3, "min": 0.2, "max": 0.4},
+                },
+                "threshold_calibration": {"collapse_c": 2.0, "collapse_rho": 0.2},
+            }
+            _write_decision_note(report, note_path)
+            contents = note_path.read_text(encoding="utf-8")
+            self.assertIn(DECISION_NOTE_MARKER, contents)
+            self.assertIn(DECISION_NOTE_PLACEHOLDER, contents)
+
+            _write_decision_note(report, note_path)
+            overwritten = note_path.read_text(encoding="utf-8")
+            self.assertEqual(contents, overwritten)
+
+    def test_decision_note_refuses_to_overwrite_human_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            note_path = Path(tmpdir) / "2026-04-09-pilot_gate.md"
+            report = {
+                "created_at": "2026-04-09T00:00:00+00:00",
+                "pilot_id": "pilot_gate",
+                "decision": "proceed",
+                "artifacts": {"report": Path("results/runs/pilot_gate/pilot_report.json")},
+                "budget": {"sweep_hours_conservative": 100.0, "sweep_hours_optimistic": 80.0},
+                "representative_cell": {
+                    "drop_fraction_stats": {"mean": 0.2, "min": 0.1, "max": 0.3},
+                    "threshold_drop_fraction_stats": {"mean": 0.3, "min": 0.2, "max": 0.4},
+                },
+                "threshold_calibration": {"collapse_c": 2.0, "collapse_rho": 0.2},
+            }
+            _write_decision_note(report, note_path)
+            note_path.write_text(
+                note_path.read_text(encoding="utf-8").replace(
+                    DECISION_NOTE_PLACEHOLDER,
+                    "- Ship the sweep manifest to the external scheduler.",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(FileExistsError, "decision note already exists and appears to be edited"):
+                _write_decision_note(report, note_path)
 
 
 if __name__ == "__main__":

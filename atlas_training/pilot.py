@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
-from atlas_training.config import VerticalSliceConfig, add_shift_cli_args, shift_from_args
+from atlas_training.config import VerticalSliceConfig, add_collapse_cli_args, add_shift_cli_args, shift_from_args
 from atlas_training.diagnostics import write_diagnostic_summary
 from atlas_training.preflight import (
     DEFAULT_MIN_FREE_DISK_GB,
@@ -39,6 +39,9 @@ DROP_FRACTION_MIN = 0.15
 DROP_FRACTION_MAX = 0.50
 THRESHOLD_DROP_FRACTION_MAX = 0.50
 EPSILON = 1e-8
+DECISION_NOTE_MARKER = "<!-- AUTO-GENERATED PILOT DECISION STUB: SAFE TO OVERWRITE UNTIL NEXT ACTION IS EDITED -->"
+DECISION_NOTE_PLACEHOLDER = "- TODO: replace with the chosen next action before committing."
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,8 @@ def _pilot_config_kwargs(args: argparse.Namespace, shift: Any) -> dict[str, Any]
         "batch_size": args.batch_size,
         "replay_capacity": args.replay_capacity,
         "min_replay_size": args.min_replay_size,
+        "collapse_c": args.collapse_c,
+        "collapse_rho": args.collapse_rho,
         "diagnostic_min_transitions": args.diagnostic_min_transitions,
         "diagnostic_minibatches": args.diagnostic_minibatches,
         "diagnostic_batch_size": args.diagnostic_batch_size,
@@ -232,6 +237,68 @@ def count_eval_rows(eval_log_path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
+def _decision_note_path(run_id: str, created_at: datetime | None = None) -> Path:
+    timestamp = datetime.now(timezone.utc) if created_at is None else created_at
+    return REPO_ROOT / "docs" / "decisions" / f"{timestamp.date().isoformat()}-{run_id}.md"
+
+
+def _can_overwrite_decision_note(path: Path) -> bool:
+    if not path.exists():
+        return True
+    contents = path.read_text(encoding="utf-8")
+    return DECISION_NOTE_MARKER in contents and DECISION_NOTE_PLACEHOLDER in contents
+
+
+def _ensure_decision_note_can_be_written(path: Path) -> None:
+    if _can_overwrite_decision_note(path):
+        return
+    raise FileExistsError(
+        f"decision note already exists and appears to be edited: {path}; use a different --run-id or remove it manually"
+    )
+
+
+def _ensure_phase_can_run(phase_name: str, summary_path: Path, *, force: bool) -> None:
+    if force or not summary_path.exists():
+        return
+    raise FileExistsError(
+        f"{phase_name} is already complete at {summary_path}; rerun with --force to overwrite completed phases"
+    )
+
+
+def _decision_note_template(report: dict[str, Any], note_path: Path) -> str:
+    representative = report["representative_cell"]
+    budget = report["budget"]
+    drop_stats = representative.get("drop_fraction_stats")
+    threshold_stats = representative.get("threshold_drop_fraction_stats")
+    lines = [
+        DECISION_NOTE_MARKER,
+        f"# Pilot Decision: {report['pilot_id']}",
+        "",
+        f"- Created at: {report['created_at']}",
+        f"- Decision: {report['decision']}",
+        f"- Pilot report: {report['artifacts']['report']}",
+        f"- Decision note: {note_path}",
+        "",
+        "## Key Metrics",
+        f"- Conservative sweep budget (48 runs): {budget['sweep_hours_conservative']}",
+        f"- Optimistic sweep budget (48 runs): {budget['sweep_hours_optimistic']}",
+        f"- Representative drop-fraction stats: {drop_stats}",
+        f"- Threshold-drop-fraction stats: {threshold_stats}",
+        f"- Threshold calibration: c={report['threshold_calibration']['collapse_c']}, rho={report['threshold_calibration']['collapse_rho']}",
+        "",
+        "## Next Action",
+        DECISION_NOTE_PLACEHOLDER,
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _write_decision_note(report: dict[str, Any], note_path: Path) -> None:
+    _ensure_decision_note_can_be_written(note_path)
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(_decision_note_template(report, note_path), encoding="utf-8")
+
+
 def _preparse_profile(argv: Sequence[str] | None) -> argparse.Namespace:
     # Parse just enough to choose profile-scoped defaults before the full CLI parse.
     parser = argparse.ArgumentParser(add_help=False)
@@ -267,6 +334,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=profile_defaults.get("baseline_eval_episodes", DEFAULT_BASELINE_EVAL_EPISODES),
     )
+    add_collapse_cli_args(parser)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--replay-capacity", type=int, default=100_000)
     parser.add_argument("--min-replay-size", type=int, default=1024)
@@ -282,6 +350,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=profile_defaults.get("stop_on_collapse", True),
     )
     parser.add_argument("--preflight-only", action="store_true", default=pre_parsed.preflight_only)
+    parser.add_argument("--force", action="store_true", default=False)
     parser.add_argument("--allow-cpu", action="store_true", default=False)
     parser.add_argument("--preflight-json", type=Path, default=None)
     parser.add_argument("--min-free-disk-gb", type=float, default=DEFAULT_MIN_FREE_DISK_GB)
@@ -337,6 +406,7 @@ def _run_pretrain_phase(
     run_pretrain: Any,
 ) -> PretrainPhaseResult:
     pretrain_config = _build_pretrain_config(args, layout, shift)
+    _ensure_phase_can_run("shared_pretrain", pretrain_config.summary_path(), force=args.force)
     pretrain_summary = run_pretrain(pretrain_config)
     return PretrainPhaseResult(
         config=pretrain_config,
@@ -396,6 +466,7 @@ def _run_finetune_seed(
         seed=seed,
         checkpoint_dir=pretrain.config.checkpoint_dir(),
     )
+    _ensure_phase_can_run(f"seed_{seed}", finetune_config.summary_path(), force=args.force)
     diagnostic_summary_path = finetune_config.output_dir / "diagnostic_summary.json"
     try:
         finetune_summary = run_finetune(finetune_config)
@@ -411,12 +482,17 @@ def _run_finetune_seed(
         mu0 = float(baseline_payload["mu0"])
         sigma0 = float(baseline_payload["sigma0"])
         threshold = float(baseline_payload["threshold"])
+        collapse_c = float(baseline_payload.get("collapse_c", finetune_config.collapse_c))
+        collapse_rho = float(baseline_payload.get("collapse_rho", finetune_config.collapse_rho))
+        threshold_rule = str(baseline_payload.get("threshold_rule", "sigma"))
         has_nonfinite_metrics = not all(
             _is_finite_number(value)
             for value in (
                 mu0,
                 sigma0,
                 threshold,
+                collapse_c,
+                collapse_rho,
                 finetune_summary["steps_per_second"],
                 finetune_summary["wallclock_seconds"],
             )
@@ -429,6 +505,9 @@ def _run_finetune_seed(
             "mu0": mu0,
             "sigma0": sigma0,
             "threshold": threshold,
+            "collapse_c": collapse_c,
+            "collapse_rho": collapse_rho,
+            "threshold_rule": threshold_rule,
             "drop_fraction": round(drop_fraction(pretrain.nominal_mean, mu0), 6),
             "threshold_drop_fraction": round(threshold_drop_fraction(mu0, threshold), 6),
             "wallclock_seconds": float(finetune_summary["wallclock_seconds"]),
@@ -507,6 +586,7 @@ def _run_probe_phase(
     run_throughput_probe: Any,
 ) -> ProbePhaseResult:
     probe_config = _build_probe_config(args, layout, shift)
+    _ensure_phase_can_run("extreme_probe", probe_config.summary_path(), force=args.force)
     try:
         return ProbePhaseResult(
             config=probe_config,
@@ -527,6 +607,7 @@ def _build_pilot_report(
     shift: Any,
     preflight_path: Path,
     preflight: dict[str, Any],
+    decision_note_path: Path,
     pretrain: PretrainPhaseResult,
     seed_results: Sequence[dict[str, Any]],
     probe: ProbePhaseResult,
@@ -597,6 +678,10 @@ def _build_pilot_report(
             "threshold_drop_fraction_stats": threshold_drop_stats,
             "throughput_steps_per_second_stats": representative_throughput_stats,
         },
+        "threshold_calibration": {
+            "collapse_c": args.collapse_c,
+            "collapse_rho": args.collapse_rho,
+        },
         "extreme_probe": {
             "n_step": EXTREMAL_N_STEP,
             "critic_width": EXTREMAL_CRITIC_WIDTH,
@@ -612,6 +697,7 @@ def _build_pilot_report(
         "artifacts": {
             "report": layout.report_path,
             "preflight": preflight_path,
+            "decision_note": decision_note_path,
             "pretrain_summary": pretrain.config.summary_path(),
             "pretrain_checkpoint": pretrain.config.checkpoint_dir(),
             "extreme_probe_summary": probe.config.summary_path(),
@@ -629,6 +715,10 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
     seed_values = args.seed_values
     layout = build_pilot_layout(args.output_dir, seed_values)
     shift = shift_from_args(args)
+    decision_note_path = _decision_note_path(args.run_id)
+
+    if not args.preflight_only:
+        _ensure_decision_note_can_be_written(decision_note_path)
 
     preflight_path, preflight = _run_preflight_phase(args, layout)
     if args.preflight_only:
@@ -645,6 +735,17 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
     pretrain = _run_pretrain_phase(args, layout, shift, run_pretrain)
     seed_results = _run_finetune_phase(args, layout, shift, pretrain, run_finetune)
     probe = _run_probe_phase(args, layout, shift, run_throughput_probe)
-    report = _build_pilot_report(args, layout, shift, preflight_path, preflight, pretrain, seed_results, probe)
+    report = _build_pilot_report(
+        args,
+        layout,
+        shift,
+        preflight_path,
+        preflight,
+        decision_note_path,
+        pretrain,
+        seed_results,
+        probe,
+    )
     write_json(layout.report_path, report)
+    _write_decision_note(report, decision_note_path)
     return report
