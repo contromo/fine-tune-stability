@@ -233,6 +233,7 @@ def count_eval_rows(eval_log_path: Path) -> int:
 
 
 def _preparse_profile(argv: Sequence[str] | None) -> argparse.Namespace:
+    # Parse just enough to choose profile-scoped defaults before the full CLI parse.
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--profile", choices=(DEFAULT_PROFILE, PRODUCTION_PROFILE), default=DEFAULT_PROFILE)
     parser.add_argument("--preflight-only", action="store_true")
@@ -243,6 +244,7 @@ def _preparse_profile(argv: Sequence[str] | None) -> argparse.Namespace:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     pre_parsed = _preparse_profile(argv)
     profile_defaults = _profile_defaults(pre_parsed.profile)
+    require_pretrain_steps = not pre_parsed.preflight_only and profile_defaults.get("pretrain_steps") is None
     parser = argparse.ArgumentParser(description="Run the Stability Atlas pilot calibration gate.")
     parser.add_argument("--profile", choices=(DEFAULT_PROFILE, PRODUCTION_PROFILE), default=pre_parsed.profile)
     parser.add_argument("--output-dir", type=Path, default=profile_defaults.get("output_dir", Path("results/runs/pilot_gate")))
@@ -254,7 +256,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--pretrain-steps",
         type=int,
         default=profile_defaults.get("pretrain_steps"),
-        required=not pre_parsed.preflight_only and profile_defaults.get("pretrain_steps") is None,
+        required=require_pretrain_steps,
     )
     parser.add_argument("--fine-tune-steps", type=int, default=profile_defaults.get("fine_tune_steps", DEFAULT_FINE_TUNE_STEPS))
     parser.add_argument("--eval-interval", type=int, default=profile_defaults.get("eval_interval", 100_000))
@@ -309,11 +311,6 @@ def _is_finite_number(value: Any) -> bool:
         return math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
-
-
-def _rewrite_phase_summary(summary_path: Path, summary_payload: dict[str, Any]) -> dict[str, Any]:
-    write_json(summary_path, summary_payload)
-    return summary_payload
 
 
 def _build_pretrain_config(
@@ -409,7 +406,7 @@ def _run_finetune_seed(
             prediction_horizon=DEFAULT_PREDICTION_HORIZON,
             allow_missing=True,
         )
-        finetune_summary = _rewrite_phase_summary(finetune_config.summary_path(), finetune_summary)
+        write_json(finetune_config.summary_path(), finetune_summary)
         emitted_rows = count_eval_rows(finetune_config.eval_log_path())
         mu0 = float(baseline_payload["mu0"])
         sigma0 = float(baseline_payload["sigma0"])

@@ -13,16 +13,23 @@ if str(ROOT) not in sys.path:
 def parse_args():
     from atlas_training.pilot import parse_args as parse_pilot_args
 
-    forwarded = ["--preflight-only", *sys.argv[1:]]
+    forwarded = list(sys.argv[1:])
+    if "--preflight-only" not in forwarded:
+        forwarded = ["--preflight-only", *forwarded]
     return parse_pilot_args(forwarded)
 
 
 def main() -> None:
     from atlas_training.pilot import run_pilot_cli
+    from atlas_training.preflight import PreflightError
 
     args = parse_args()
-    result = run_pilot_cli(args)
-    print(f"Wrote {result['preflight_path']}")
+    try:
+        result = run_pilot_cli(args)
+    except PreflightError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1)
+    print(f"Wrote {str(result['preflight_path'])}")
     print(
         json.dumps(
             {

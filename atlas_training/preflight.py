@@ -94,6 +94,8 @@ def _device_descriptors(devices: list[Any]) -> list[str]:
 def _memory_report(devices: list[Any]) -> dict[str, Any]:
     if not devices:
         return {"status": "no_devices"}
+    # The current pilot targets one host / one active accelerator. If multi-device
+    # scheduling becomes relevant, expand this to report all visible devices.
     primary_device = devices[0]
     memory_stats = getattr(primary_device, "memory_stats", None)
     if not callable(memory_stats):
@@ -114,6 +116,8 @@ def _ensure_output_dir_writable(output_dir: Path) -> None:
 
 
 def environment_from_preflight(preflight_payload: dict[str, Any]) -> dict[str, Any]:
+    # Pilot reports intentionally embed a frozen subset of preflight metadata so
+    # downstream readers get a stable contract even if preflight.json grows.
     environment = dict(preflight_payload.get("environment", {}))
     packages = dict(environment.get("packages", {}))
     return {
@@ -153,11 +157,12 @@ def collect_preflight(
 
     disk_usage_path = _resolve_existing_path(output_dir)
     free_bytes = shutil.disk_usage(disk_usage_path).free
-    free_disk_gb = free_bytes / (1024.0**3)
+    # The CLI and report contract say "GB", so use decimal gigabytes here.
+    free_disk_gb = free_bytes / (1000.0**3)
     disk_ok = free_disk_gb >= min_free_disk_gb
     if not disk_ok:
         errors.append(
-            f"free disk {free_disk_gb:.3f} GiB is below required minimum {min_free_disk_gb:.3f} GiB"
+            f"free disk {free_disk_gb:.3f} GB is below required minimum {min_free_disk_gb:.3f} GB"
         )
 
     package_versions, missing_packages = _package_versions()
@@ -190,20 +195,21 @@ def collect_preflight(
             errors.append(f"failed to initialize JAX runtime: {exc}")
             memory = {"status": "error", "message": str(exc)}
 
-    if memory.get("status") == "unsupported":
+    memory_status = memory.get("status")
+    if memory_status == "unsupported":
         warnings.append("GPU memory inspection is unsupported on this backend")
-    if memory.get("status") == "error":
+    elif memory_status == "error":
         warnings.append("GPU memory inspection failed on this backend")
 
     payload = {
         "created_at": _utc_now(),
         "status": "error" if errors else "ok",
-        "output_dir": output_dir,
-        "preflight_path": preflight_path,
+        "output_dir": str(output_dir),
+        "preflight_path": str(preflight_path),
         "environment": environment,
         "checks": {
             "output_dir_writable": output_dir_writable,
-            "disk_usage_path": disk_usage_path,
+            "disk_usage_path": str(disk_usage_path),
             "free_disk_bytes": free_bytes,
             "free_disk_gb": round(free_disk_gb, 6),
             "min_free_disk_gb": float(min_free_disk_gb),

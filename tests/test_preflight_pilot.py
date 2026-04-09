@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import namedtuple
+import importlib.util
 import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
 
-from atlas_training.preflight import collect_preflight, environment_from_preflight
+from atlas_training.preflight import PreflightError, collect_preflight, environment_from_preflight, run_preflight
 
 
 class _FakeDevice:
@@ -32,6 +33,15 @@ class _FakeJax:
 
     def devices(self):
         return self._devices
+
+
+def _load_script(path: Path):
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class PreflightPilotTest(unittest.TestCase):
@@ -94,6 +104,18 @@ class PreflightPilotTest(unittest.TestCase):
         self.assertEqual(payload["status"], "error")
         self.assertFalse(payload["checks"]["disk_ok"])
 
+    def test_collect_preflight_fails_when_training_dependencies_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+            "atlas_training.preflight._package_versions",
+            return_value=({"brax": None}, ["brax"]),
+        ):
+            payload = collect_preflight(
+                output_dir=Path(tmpdir),
+                preflight_path=Path(tmpdir) / "preflight.json",
+            )
+        self.assertEqual(payload["status"], "error")
+        self.assertTrue(any("missing training dependencies" in message for message in payload["errors"]))
+
     def test_collect_preflight_records_null_git_commit_when_unavailable(self) -> None:
         fake_jax = _FakeJax(
             backend="gpu",
@@ -112,6 +134,22 @@ class PreflightPilotTest(unittest.TestCase):
             )
         self.assertIsNone(payload["environment"]["git_commit"])
         self.assertEqual(payload["memory"]["status"], "available")
+
+    def test_collect_preflight_warns_when_memory_report_errors(self) -> None:
+        fake_jax = _FakeJax(backend="gpu", devices=[_FakeDevice(platform="gpu", device_kind="Test GPU")])
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+            "atlas_training.preflight._package_versions",
+            return_value=self._base_versions(),
+        ), mock.patch("atlas_training.preflight.importlib.import_module", return_value=fake_jax), mock.patch(
+            "atlas_training.preflight._memory_report",
+            return_value={"status": "error", "message": "boom"},
+        ):
+            payload = collect_preflight(
+                output_dir=Path(tmpdir),
+                preflight_path=Path(tmpdir) / "preflight.json",
+            )
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(any("memory inspection failed" in message for message in payload["warnings"]))
 
     def test_collect_preflight_fails_when_output_dir_is_not_writable(self) -> None:
         fake_jax = _FakeJax(backend="gpu", devices=[_FakeDevice(platform="gpu", device_kind="Test GPU")])
@@ -167,6 +205,43 @@ class PreflightPilotTest(unittest.TestCase):
                 },
             },
         )
+
+    def test_run_preflight_raises_preflight_error_when_checks_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+            "atlas_training.preflight.collect_preflight",
+            return_value={
+                "status": "error",
+                "errors": ["bad host"],
+                "warnings": [],
+            },
+        ), mock.patch("atlas_training.preflight.write_json"):
+            with self.assertRaises(PreflightError):
+                run_preflight(
+                    output_dir=Path(tmpdir),
+                    preflight_path=Path(tmpdir) / "preflight.json",
+                )
+
+    def test_preflight_script_main_exits_cleanly_on_preflight_error(self) -> None:
+        script = _load_script(Path(__file__).resolve().parents[1] / "scripts" / "preflight_pilot.py")
+        with mock.patch.object(
+            script,
+            "parse_args",
+            return_value=mock.Mock(),
+        ), mock.patch(
+            "atlas_training.pilot.run_pilot_cli",
+            side_effect=PreflightError("cpu only"),
+        ), mock.patch("sys.stderr") as stderr:
+            with self.assertRaises(SystemExit) as exc_info:
+                script.main()
+        self.assertEqual(exc_info.exception.code, 1)
+        stderr.write.assert_called()
+
+    def test_preflight_script_parse_args_forces_preflight_only(self) -> None:
+        script = _load_script(Path(__file__).resolve().parents[1] / "scripts" / "preflight_pilot.py")
+        with mock.patch("sys.argv", ["preflight_pilot.py", "--profile", "production"]):
+            args = script.parse_args()
+        self.assertTrue(args.preflight_only)
+        self.assertEqual(args.profile, "production")
 
 
 if __name__ == "__main__":
