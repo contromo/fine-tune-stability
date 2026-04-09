@@ -14,7 +14,9 @@ if str(ROOT) not in sys.path:
 
 from atlas.config import build_budget_table, default_hyperparameters, generate_sweep
 
-NON_100M_SWEEP_ERROR = "sweep model assumes 100M steps per run; rerun with --pilot-hours"
+NON_100M_SWEEP_ERROR = (
+    "sweep model assumes 100M steps per run; compute an explicit per-run budget and rerun with --pilot-hours"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,10 +36,11 @@ def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[fl
     pilot_hours = budget.get("hours_per_100m_extreme")
     if pilot_hours is None or not math.isfinite(float(pilot_hours)):
         raise ValueError("pilot report is missing a finite budget.hours_per_100m_extreme")
-    return float(pilot_hours), {
+    pilot_hours_value = float(pilot_hours)
+    return pilot_hours_value, {
         "mode": "pilot_report",
         "pilot_report": str(path),
-        "pilot_hours_per_run": float(pilot_hours),
+        "pilot_hours_per_run": pilot_hours_value,
         "assumption": "budget.hours_per_100m_extreme is treated as hours per full 100M-step sweep run",
     }
 

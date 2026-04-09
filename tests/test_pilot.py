@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 from pathlib import Path
 
@@ -287,6 +288,7 @@ class PilotTest(unittest.TestCase):
             layout.output_dir / "preflight.json",
             preflight,
             Path(__file__).resolve().parents[1] / "docs" / "decisions" / "2026-04-09-pilot_gate.md",
+            datetime(2026, 4, 9, 0, 0, tzinfo=timezone.utc),
             pretrain,
             seed_results,
             probe,
@@ -294,6 +296,7 @@ class PilotTest(unittest.TestCase):
 
         self.assertEqual(report["extreme_probe"]["steps_per_second"], None)
         self.assertEqual(report["budget"]["sweep_hours_conservative"], float("inf"))
+        self.assertEqual(report["created_at"], "2026-04-09T00:00:00+00:00")
         self.assertEqual(report["preflight_path"], layout.output_dir / "preflight.json")
         self.assertEqual(
             report["artifacts"]["decision_note"],

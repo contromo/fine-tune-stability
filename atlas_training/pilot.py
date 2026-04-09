@@ -41,6 +41,8 @@ THRESHOLD_DROP_FRACTION_MAX = 0.50
 EPSILON = 1e-8
 DECISION_NOTE_MARKER = "<!-- AUTO-GENERATED PILOT DECISION STUB: SAFE TO OVERWRITE UNTIL NEXT ACTION IS EDITED -->"
 DECISION_NOTE_PLACEHOLDER = "- TODO: replace with the chosen next action before committing."
+# TODO: if pilot orchestration is ever run from an installed wheel instead of the repo checkout,
+# route decision-note output through an explicit configurable base path.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -265,7 +267,7 @@ def _ensure_phase_can_run(phase_name: str, summary_path: Path, *, force: bool) -
     )
 
 
-def _decision_note_template(report: dict[str, Any], note_path: Path) -> str:
+def _decision_note_template(report: dict[str, Any]) -> str:
     representative = report["representative_cell"]
     budget = report["budget"]
     drop_stats = representative.get("drop_fraction_stats")
@@ -277,7 +279,6 @@ def _decision_note_template(report: dict[str, Any], note_path: Path) -> str:
         f"- Created at: {report['created_at']}",
         f"- Decision: {report['decision']}",
         f"- Pilot report: {report['artifacts']['report']}",
-        f"- Decision note: {note_path}",
         "",
         "## Key Metrics",
         f"- Conservative sweep budget (48 runs): {budget['sweep_hours_conservative']}",
@@ -296,7 +297,7 @@ def _decision_note_template(report: dict[str, Any], note_path: Path) -> str:
 def _write_decision_note(report: dict[str, Any], note_path: Path) -> None:
     _ensure_decision_note_can_be_written(note_path)
     note_path.parent.mkdir(parents=True, exist_ok=True)
-    note_path.write_text(_decision_note_template(report, note_path), encoding="utf-8")
+    note_path.write_text(_decision_note_template(report), encoding="utf-8")
 
 
 def _preparse_profile(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -350,7 +351,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=profile_defaults.get("stop_on_collapse", True),
     )
     parser.add_argument("--preflight-only", action="store_true", default=pre_parsed.preflight_only)
-    parser.add_argument("--force", action="store_true", default=False)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="overwrite all completed pilot phases for this run; this is a global rerun flag, not a per-phase selector",
+    )
     parser.add_argument("--allow-cpu", action="store_true", default=False)
     parser.add_argument("--preflight-json", type=Path, default=None)
     parser.add_argument("--min-free-disk-gb", type=float, default=DEFAULT_MIN_FREE_DISK_GB)
@@ -608,6 +614,7 @@ def _build_pilot_report(
     preflight_path: Path,
     preflight: dict[str, Any],
     decision_note_path: Path,
+    created_at: datetime,
     pretrain: PretrainPhaseResult,
     seed_results: Sequence[dict[str, Any]],
     probe: ProbePhaseResult,
@@ -641,7 +648,7 @@ def _build_pilot_report(
     decision, reasons = classify_pilot_gate(seed_results, float(budget["sweep_hours_conservative"]))
 
     return {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at.isoformat(),
         "pilot_id": args.run_id,
         "preflight_path": preflight_path,
         "environment": environment_from_preflight(preflight),
@@ -715,7 +722,8 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
     seed_values = args.seed_values
     layout = build_pilot_layout(args.output_dir, seed_values)
     shift = shift_from_args(args)
-    decision_note_path = _decision_note_path(args.run_id)
+    created_at = datetime.now(timezone.utc)
+    decision_note_path = _decision_note_path(args.run_id, created_at=created_at)
 
     if not args.preflight_only:
         _ensure_decision_note_can_be_written(decision_note_path)
@@ -742,6 +750,7 @@ def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
         preflight_path,
         preflight,
         decision_note_path,
+        created_at,
         pretrain,
         seed_results,
         probe,
