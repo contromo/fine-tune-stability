@@ -80,9 +80,13 @@ python3 scripts/run_finetune.py \
 Run the pilot calibration gate with a shared pretrain, three fine-tune seeds, and one extremal throughput probe:
 
 ```bash
-python3 scripts/run_pilot.py \
-  --output-dir results/runs/pilot_gate \
-  --pretrain-steps 1000000
+python3 scripts/run_pilot.py --profile production
+```
+
+Run standalone host preflight before launching the full pilot:
+
+```bash
+python3 scripts/preflight_pilot.py --profile production
 ```
 
 Summarize diagnostic logs:
@@ -118,13 +122,15 @@ Fine-tune writes:
 
 Pilot writes:
 
+- `results/runs/<pilot_id>/preflight.json`
+- `results/runs/<pilot_id>/pilot.log`
 - `results/runs/<pilot_id>/pilot_report.json`
 - `results/runs/<pilot_id>/shared_pretrain/...`
 - `results/runs/<pilot_id>/seed_<seed>/...`
 - `results/runs/<pilot_id>/extreme_probe/summary.json`
 
 `summary.json` includes `warning_triggered` as a convenience summary field. The canonical per-eval warning signal remains `score` in `eval_log.jsonl`.
-`pilot_report.json` includes an explicit `proceed`, `adjust`, or `fail` gate decision plus the shared-pretrain caveat and conservative sweep budget bound.
+`pilot_report.json` includes an explicit `proceed`, `adjust`, or `fail` gate decision plus the shared-pretrain caveat, conservative sweep budget bound, embedded environment metadata, and `preflight_path`.
 
 ## Important Runtime Conventions
 
@@ -169,4 +175,5 @@ That smoke now covers both the original vertical slice and a tiny pilot run, inc
 
 - Methodology details live in [`docs/methodology.md`](docs/methodology.md).
 - Brax integration assumptions and hook points live in [`docs/integration.md`](docs/integration.md).
+- Real pilot operating instructions live in [`docs/pilot_runbook.md`](docs/pilot_runbook.md).
 - Project-specific contributor guidance for agents and maintainers lives in [`AGENTS.md`](AGENTS.md).

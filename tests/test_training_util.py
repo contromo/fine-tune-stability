@@ -4,6 +4,7 @@ import json
 import math
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from atlas_training.util import hours_per_100m, json_ready, summarize_throughput_rates, write_json
@@ -45,6 +46,16 @@ class TrainingUtilTest(unittest.TestCase):
             write_json(output, {"path": Path("results/example")})
             persisted = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(persisted["path"], "results/example")
+
+    def test_write_json_cleans_temporary_artifacts_on_replace_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            output = output_dir / "payload.json"
+            with mock.patch("pathlib.Path.replace", side_effect=RuntimeError("replace failed")):
+                with self.assertRaises(RuntimeError):
+                    write_json(output, {"path": Path("results/example")})
+            self.assertFalse(output.exists())
+            self.assertEqual(list(output_dir.iterdir()), [])
 
 
 if __name__ == "__main__":

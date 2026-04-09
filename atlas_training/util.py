@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -21,7 +22,11 @@ def json_ready(value: Any) -> Any:
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(json_ready(payload), indent=2) + "\n", encoding="utf-8")
+    encoded = json.dumps(json_ready(payload), indent=2) + "\n"
+    with tempfile.TemporaryDirectory(dir=path.parent) as tempdir:
+        temp_path = Path(tempdir) / path.name
+        temp_path.write_text(encoded, encoding="utf-8")
+        temp_path.replace(path)
 
 
 def hours_per_100m(steps_per_second: float) -> float:

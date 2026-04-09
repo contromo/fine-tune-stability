@@ -11,8 +11,17 @@ from typing import Any, Dict, Iterable, Sequence
 
 from atlas_training.config import VerticalSliceConfig, add_shift_cli_args, shift_from_args
 from atlas_training.diagnostics import write_diagnostic_summary
+from atlas_training.preflight import (
+    DEFAULT_MIN_FREE_DISK_GB,
+    environment_from_preflight,
+    resolve_preflight_path,
+    run_preflight,
+)
 from atlas_training.util import hours_per_100m, write_json
 
+DEFAULT_PROFILE = "default"
+PRODUCTION_PROFILE = "production"
+DEFAULT_PRODUCTION_PRETRAIN_STEPS = 1_000_000
 REPRESENTATIVE_N_STEP = 1
 REPRESENTATIVE_CRITIC_WIDTH = 256
 EXTREMAL_N_STEP = 10
@@ -54,6 +63,22 @@ class ProbePhaseResult:
     config: VerticalSliceConfig
     summary: dict[str, Any] | None
     error: str | None
+
+
+def _profile_defaults(profile: str) -> dict[str, Any]:
+    if profile == PRODUCTION_PROFILE:
+        return {
+            "output_dir": Path("results/runs/pilot_gate"),
+            "run_id": "pilot_gate",
+            "pretrain_steps": DEFAULT_PRODUCTION_PRETRAIN_STEPS,
+            "fine_tune_steps": DEFAULT_FINE_TUNE_STEPS,
+            "seeds": "0,1,2",
+            "baseline_eval_episodes": DEFAULT_BASELINE_EVAL_EPISODES,
+            "eval_interval": 100_000,
+            "num_envs": 32,
+            "stop_on_collapse": True,
+        }
+    return {}
 
 
 def _pilot_config_kwargs(args: argparse.Namespace, shift: Any) -> dict[str, Any]:
@@ -207,19 +232,41 @@ def count_eval_rows(eval_log_path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
+def _preparse_profile(argv: Sequence[str] | None) -> argparse.Namespace:
+    # Parse just enough to choose profile-scoped defaults before the full CLI parse.
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--profile", choices=(DEFAULT_PROFILE, PRODUCTION_PROFILE), default=DEFAULT_PROFILE)
+    parser.add_argument("--preflight-only", action="store_true")
+    parsed, _unknown = parser.parse_known_args(argv)
+    return parsed
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    pre_parsed = _preparse_profile(argv)
+    profile_defaults = _profile_defaults(pre_parsed.profile)
+    require_pretrain_steps = not pre_parsed.preflight_only and profile_defaults.get("pretrain_steps") is None
     parser = argparse.ArgumentParser(description="Run the Stability Atlas pilot calibration gate.")
-    parser.add_argument("--output-dir", type=Path, default=Path("results/runs/pilot_gate"))
-    parser.add_argument("--run-id", type=str, default="pilot_gate")
+    parser.add_argument("--profile", choices=(DEFAULT_PROFILE, PRODUCTION_PROFILE), default=pre_parsed.profile)
+    parser.add_argument("--output-dir", type=Path, default=profile_defaults.get("output_dir", Path("results/runs/pilot_gate")))
+    parser.add_argument("--run-id", type=str, default=profile_defaults.get("run_id", "pilot_gate"))
     parser.add_argument("--env-name", type=str, default="Go1JoystickFlatTerrain")
     parser.add_argument("--pretrain-seed", type=int, default=0)
-    parser.add_argument("--seeds", type=str, default="0,1,2")
-    parser.add_argument("--pretrain-steps", type=int, required=True)
-    parser.add_argument("--fine-tune-steps", type=int, default=DEFAULT_FINE_TUNE_STEPS)
-    parser.add_argument("--eval-interval", type=int, default=100_000)
-    parser.add_argument("--num-envs", type=int, default=32)
+    parser.add_argument("--seeds", type=str, default=profile_defaults.get("seeds", "0,1,2"))
+    parser.add_argument(
+        "--pretrain-steps",
+        type=int,
+        default=profile_defaults.get("pretrain_steps"),
+        required=require_pretrain_steps,
+    )
+    parser.add_argument("--fine-tune-steps", type=int, default=profile_defaults.get("fine_tune_steps", DEFAULT_FINE_TUNE_STEPS))
+    parser.add_argument("--eval-interval", type=int, default=profile_defaults.get("eval_interval", 100_000))
+    parser.add_argument("--num-envs", type=int, default=profile_defaults.get("num_envs", 32))
     parser.add_argument("--eval-episodes", type=int, default=10)
-    parser.add_argument("--baseline-eval-episodes", type=int, default=DEFAULT_BASELINE_EVAL_EPISODES)
+    parser.add_argument(
+        "--baseline-eval-episodes",
+        type=int,
+        default=profile_defaults.get("baseline_eval_episodes", DEFAULT_BASELINE_EVAL_EPISODES),
+    )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--replay-capacity", type=int, default=100_000)
     parser.add_argument("--min-replay-size", type=int, default=1024)
@@ -229,10 +276,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--episode-length", type=int, default=1000)
     parser.add_argument("--action-repeat", type=int, default=1)
     parser.add_argument("--throughput-probe-updates", type=int, default=DEFAULT_THROUGHPUT_PROBE_UPDATES)
-    parser.add_argument("--stop-on-collapse", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--stop-on-collapse",
+        action=argparse.BooleanOptionalAction,
+        default=profile_defaults.get("stop_on_collapse", True),
+    )
+    parser.add_argument("--preflight-only", action="store_true", default=pre_parsed.preflight_only)
+    parser.add_argument("--allow-cpu", action="store_true", default=False)
+    parser.add_argument("--preflight-json", type=Path, default=None)
+    parser.add_argument("--min-free-disk-gb", type=float, default=DEFAULT_MIN_FREE_DISK_GB)
     add_shift_cli_args(parser)
     args = parser.parse_args(argv)
     args.seed_values = parse_seed_list(args.seeds)
+    if args.preflight_only:
+        return args
     minimum_steps = minimum_finetune_steps(
         args.eval_interval,
         num_envs=args.num_envs,
@@ -289,6 +346,18 @@ def _run_pretrain_phase(
     )
 
 
+def _run_preflight_phase(args: argparse.Namespace, layout: PilotLayout) -> tuple[Path, dict[str, Any]]:
+    preflight_path = resolve_preflight_path(layout.output_dir, args.preflight_json)
+    payload = run_preflight(
+        output_dir=layout.output_dir,
+        preflight_path=preflight_path,
+        allow_cpu=args.allow_cpu,
+        min_free_disk_gb=args.min_free_disk_gb,
+        cwd=Path.cwd(),
+    )
+    return preflight_path, payload
+
+
 def _build_finetune_config(
     args: argparse.Namespace,
     layout: PilotLayout,
@@ -337,6 +406,7 @@ def _run_finetune_seed(
             prediction_horizon=DEFAULT_PREDICTION_HORIZON,
             allow_missing=True,
         )
+        write_json(finetune_config.summary_path(), finetune_summary)
         emitted_rows = count_eval_rows(finetune_config.eval_log_path())
         mu0 = float(baseline_payload["mu0"])
         sigma0 = float(baseline_payload["sigma0"])
@@ -455,6 +525,8 @@ def _build_pilot_report(
     args: argparse.Namespace,
     layout: PilotLayout,
     shift: Any,
+    preflight_path: Path,
+    preflight: dict[str, Any],
     pretrain: PretrainPhaseResult,
     seed_results: Sequence[dict[str, Any]],
     probe: ProbePhaseResult,
@@ -490,6 +562,8 @@ def _build_pilot_report(
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "pilot_id": args.run_id,
+        "preflight_path": preflight_path,
+        "environment": environment_from_preflight(preflight),
         "decision": decision,
         "reasons": reasons,
         "caveats": [
@@ -537,6 +611,7 @@ def _build_pilot_report(
         "budget": budget,
         "artifacts": {
             "report": layout.report_path,
+            "preflight": preflight_path,
             "pretrain_summary": pretrain.config.summary_path(),
             "pretrain_checkpoint": pretrain.config.checkpoint_dir(),
             "extreme_probe_summary": probe.config.summary_path(),
@@ -551,16 +626,25 @@ def _build_pilot_report(
 
 
 def run_pilot_cli(args: argparse.Namespace) -> dict[str, Any]:
-    from atlas_training.runtime import run_finetune, run_pretrain, run_throughput_probe
-
     seed_values = args.seed_values
     layout = build_pilot_layout(args.output_dir, seed_values)
     shift = shift_from_args(args)
-    layout.output_dir.mkdir(parents=True, exist_ok=True)
+
+    preflight_path, preflight = _run_preflight_phase(args, layout)
+    if args.preflight_only:
+        return {
+            "mode": "preflight",
+            "pilot_id": args.run_id,
+            "output_dir": layout.output_dir,
+            "preflight_path": preflight_path,
+            "preflight": preflight,
+        }
+
+    from atlas_training.runtime import run_finetune, run_pretrain, run_throughput_probe
 
     pretrain = _run_pretrain_phase(args, layout, shift, run_pretrain)
     seed_results = _run_finetune_phase(args, layout, shift, pretrain, run_finetune)
     probe = _run_probe_phase(args, layout, shift, run_throughput_probe)
-    report = _build_pilot_report(args, layout, shift, pretrain, seed_results, probe)
+    report = _build_pilot_report(args, layout, shift, preflight_path, preflight, pretrain, seed_results, probe)
     write_json(layout.report_path, report)
     return report
