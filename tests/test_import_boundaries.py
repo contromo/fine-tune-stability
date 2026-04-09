@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import tempfile
+import types
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +38,63 @@ class ImportBoundaryTest(unittest.TestCase):
     def test_preflight_pilot_imports_without_training_dependencies(self) -> None:
         module = _load_script(ROOT / "scripts" / "preflight_pilot.py")
         self.assertTrue(callable(module.parse_args))
+
+    def test_run_pilot_teestream_delegates_unknown_attributes(self) -> None:
+        module = _load_script(ROOT / "scripts" / "run_pilot.py")
+
+        class _DummyStream:
+            encoding = "utf-8"
+            errors = "strict"
+
+            def __init__(self) -> None:
+                self.buffer = []
+
+            def write(self, data: str) -> int:
+                self.buffer.append(data)
+                return len(data)
+
+            def flush(self) -> None:
+                return None
+
+            def isatty(self) -> bool:
+                return True
+
+            def fileno(self) -> int:
+                return 7
+
+        original = _DummyStream()
+        tee = module._TeeStream(original, io.StringIO())
+
+        self.assertTrue(tee.isatty())
+        self.assertEqual(tee.fileno(), 7)
+        self.assertEqual(tee.encoding, "utf-8")
+        self.assertEqual(tee.errors, "strict")
+
+    def test_run_pilot_opens_pilot_log_line_buffered(self) -> None:
+        module = _load_script(ROOT / "scripts" / "run_pilot.py")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            args = Namespace(
+                output_dir=output_dir,
+                run_id="pilot_gate",
+                profile="production",
+                preflight_only=True,
+            )
+            fake_pilot = types.SimpleNamespace(
+                run_pilot_cli=lambda parsed_args: {
+                    "pilot_id": parsed_args.run_id,
+                    "preflight_path": output_dir / "preflight.json",
+                }
+            )
+            original_open = Path.open
+            with mock.patch.object(module, "parse_args", return_value=args), mock.patch.dict(
+                "sys.modules",
+                {"atlas_training.pilot": fake_pilot},
+            ), mock.patch("pathlib.Path.open", autospec=True, wraps=original_open) as open_mock:
+                module.main()
+
+            self.assertEqual(open_mock.call_args.kwargs["buffering"], 1)
 
 
 if __name__ == "__main__":

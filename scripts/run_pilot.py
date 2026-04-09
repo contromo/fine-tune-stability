@@ -32,6 +32,9 @@ class _TeeStream:
         self._original.flush()
         self._log_handle.flush()
 
+    def __getattr__(self, name: str):
+        return getattr(self._original, name)
+
 
 def main() -> None:
     from atlas_training.pilot import run_pilot_cli
@@ -40,7 +43,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     log_path = args.output_dir / "pilot.log"
     exit_code = 0
-    with log_path.open("a", encoding="utf-8") as log_handle:
+    with log_path.open("a", encoding="utf-8", buffering=1) as log_handle:
         original_stdout = sys.stdout
         original_stderr = sys.stderr
         sys.stdout = _TeeStream(original_stdout, log_handle)

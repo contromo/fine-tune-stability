@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from pathlib import Path
 import tempfile
+from pathlib import Path
 from typing import Any, Sequence
 
 
@@ -23,10 +23,10 @@ def json_ready(value: Any) -> Any:
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(json_ready(payload), indent=2) + "\n"
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        handle.write(encoded)
-        temp_path = Path(handle.name)
-    temp_path.replace(path)
+    with tempfile.TemporaryDirectory(dir=path.parent) as tempdir:
+        temp_path = Path(tempdir) / path.name
+        temp_path.write_text(encoded, encoding="utf-8")
+        temp_path.replace(path)
 
 
 def hours_per_100m(steps_per_second: float) -> float:
