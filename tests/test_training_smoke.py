@@ -56,8 +56,11 @@ class TrainingSmokeTest(unittest.TestCase):
             [
                 sys.executable,
                 str(ROOT / "scripts" / "run_pilot.py"),
+                "--profile",
+                "production",
                 "--output-dir",
                 str(pilot_dir),
+                "--allow-cpu",
                 "--pretrain-steps",
                 "16",
                 "--fine-tune-steps",
@@ -90,6 +93,8 @@ class TrainingSmokeTest(unittest.TestCase):
             check=True,
             cwd=ROOT,
         )
+        self.assertTrue((pilot_dir / "preflight.json").exists())
+        self.assertTrue((pilot_dir / "pilot.log").exists())
         self.assertTrue((pilot_dir / "pilot_report.json").exists())
         self.assertTrue((pilot_dir / "shared_pretrain" / "checkpoint" / "checkpoint.msgpack").exists())
         self.assertTrue((pilot_dir / "seed_0" / "eval_log.jsonl").exists())

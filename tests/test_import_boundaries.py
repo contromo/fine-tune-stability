@@ -30,6 +30,10 @@ class ImportBoundaryTest(unittest.TestCase):
         module = _load_script(ROOT / "scripts" / "run_pilot.py")
         self.assertTrue(callable(module.parse_args))
 
+    def test_preflight_pilot_imports_without_training_dependencies(self) -> None:
+        module = _load_script(ROOT / "scripts" / "preflight_pilot.py")
+        self.assertTrue(callable(module.parse_args))
+
 
 if __name__ == "__main__":
     unittest.main()
