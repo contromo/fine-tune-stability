@@ -48,7 +48,7 @@ def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[fl
 def _resolve_budget_source(args: argparse.Namespace, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:
     if args.from_pilot_report is not None:
         return _pilot_hours_from_report(args.from_pilot_report, total_fine_tune_steps)
-    pilot_hours = 1.0 if args.pilot_hours is None else float(args.pilot_hours)
+    pilot_hours = 1.0 if args.pilot_hours is None else args.pilot_hours
     return pilot_hours, {
         "mode": "manual",
         "pilot_report": None,
