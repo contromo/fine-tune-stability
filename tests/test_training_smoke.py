@@ -52,6 +52,8 @@ class TrainingSmokeTest(unittest.TestCase):
         self._require_smoke_environment()
 
         pilot_dir = ROOT / "results" / "runs" / "unittest_pilot"
+        finetune_dir = ROOT / "results" / "runs" / "unittest_finetune"
+        pretrain_dir = pilot_dir / "shared_pretrain"
         subprocess.run(
             [
                 sys.executable,
@@ -61,12 +63,13 @@ class TrainingSmokeTest(unittest.TestCase):
                 "--output-dir",
                 str(pilot_dir),
                 "--allow-cpu",
+                "--force",
                 "--pretrain-steps",
                 "16",
                 "--fine-tune-steps",
                 "160",
                 "--seeds",
-                "0",
+                "0,1",
                 "--eval-interval",
                 "32",
                 "--num-envs",
@@ -99,6 +102,7 @@ class TrainingSmokeTest(unittest.TestCase):
         self.assertTrue((pilot_dir / "shared_pretrain" / "checkpoint" / "checkpoint.msgpack").exists())
         self.assertTrue((pilot_dir / "seed_0" / "eval_log.jsonl").exists())
         self.assertTrue((pilot_dir / "seed_0" / "diagnostic_summary.json").exists())
+        self.assertTrue((pilot_dir / "seed_1" / "eval_log.jsonl").exists())
         self.assertTrue((pilot_dir / "extreme_probe" / "summary.json").exists())
         subprocess.run(
             [

@@ -25,6 +25,14 @@ class TrainingDiagnosticsTest(unittest.TestCase):
         self.assertAlmostEqual(baseline.mu0, 10.0)
         self.assertAlmostEqual(baseline.sigma0, 1.4142135623730951)
         self.assertLess(baseline.threshold, baseline.mu0)
+        self.assertEqual(baseline.collapse_c, 2.0)
+        self.assertEqual(baseline.collapse_rho, 0.2)
+        self.assertEqual(baseline.threshold_rule, "sigma")
+
+    def test_freeze_baseline_records_floor_rule_when_more_conservative(self) -> None:
+        baseline = freeze_baseline([100.0, 100.0, 100.0], c=0.1, rho=0.2)
+        self.assertEqual(baseline.threshold_rule, "floor")
+        self.assertEqual(baseline.threshold, 80.0)
 
     def test_warmup_variance_skips_first_two_rows(self) -> None:
         state = DiagnosticLogState()

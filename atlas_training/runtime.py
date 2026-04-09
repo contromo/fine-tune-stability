@@ -104,6 +104,8 @@ def run_finetune_cli(args: argparse.Namespace) -> None:
         num_envs=args.num_envs,
         eval_episodes=args.eval_episodes,
         baseline_eval_episodes=args.baseline_eval_episodes,
+        collapse_c=args.collapse_c,
+        collapse_rho=args.collapse_rho,
         batch_size=args.batch_size,
         replay_capacity=args.replay_capacity,
         min_replay_size=args.min_replay_size,
@@ -211,7 +213,11 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     )
 
     baseline_returns = _evaluate_policy(runtime, baseline_evaluator, training_state)["episode_returns"]
-    baseline = freeze_baseline(baseline_returns)
+    baseline = freeze_baseline(
+        baseline_returns,
+        c=config.collapse_c,
+        rho=config.collapse_rho,
+    )
     write_json(
         config.pretrain_baseline_path(),
         {
@@ -221,6 +227,9 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
             "mu0": baseline.mu0,
             "sigma0": baseline.sigma0,
             "threshold": baseline.threshold,
+            "collapse_c": baseline.collapse_c,
+            "collapse_rho": baseline.collapse_rho,
+            "threshold_rule": baseline.threshold_rule,
         },
     )
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from atlas_training.config import (
     VerticalSliceConfig,
+    add_collapse_cli_args,
     add_common_cli_args,
     build_run_id,
     checkpoint_signature,
@@ -25,6 +26,13 @@ class TrainingConfigTest(unittest.TestCase):
         self.assertEqual(args.env_name, "Go1JoystickFlatTerrain")
         self.assertEqual(args.batch_size, 256)
         self.assertEqual(args.eval_interval, 1024)
+
+    def test_add_collapse_cli_args(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_collapse_cli_args(parser)
+        args = parser.parse_args([])
+        self.assertEqual(args.collapse_c, 2.0)
+        self.assertEqual(args.collapse_rho, 0.2)
 
     def test_with_run_id_preserves_shift_dataclass(self) -> None:
         config = VerticalSliceConfig(stage="pretrain", output_dir=Path("results"))

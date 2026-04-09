@@ -89,6 +89,21 @@ Run standalone host preflight before launching the full pilot:
 python3 scripts/preflight_pilot.py --profile production
 ```
 
+Run a reduced-budget GPU-host smoke pilot on the production code path:
+
+```bash
+python3 scripts/run_pilot.py \
+  --profile production \
+  --run-id pilot_gpu_smoke \
+  --output-dir results/runs/pilot_gpu_smoke \
+  --seeds 0,1 \
+  --pretrain-steps 50000 \
+  --eval-interval 10000 \
+  --fine-tune-steps 50016 \
+  --baseline-eval-episodes 10 \
+  --throughput-probe-updates 50
+```
+
 Summarize diagnostic logs:
 
 ```bash
@@ -128,9 +143,11 @@ Pilot writes:
 - `results/runs/<pilot_id>/shared_pretrain/...`
 - `results/runs/<pilot_id>/seed_<seed>/...`
 - `results/runs/<pilot_id>/extreme_probe/summary.json`
+- `docs/decisions/YYYY-MM-DD-<run_id>.md`
 
 `summary.json` includes `warning_triggered` as a convenience summary field. The canonical per-eval warning signal remains `score` in `eval_log.jsonl`.
 `pilot_report.json` includes an explicit `proceed`, `adjust`, or `fail` gate decision plus the shared-pretrain caveat, conservative sweep budget bound, embedded environment metadata, and `preflight_path`.
+`pilot_report.json` also records threshold-calibration provenance (`collapse_c`, `collapse_rho`) and the decision-note path used for the durable operator record.
 
 ## Important Runtime Conventions
 
@@ -176,4 +193,12 @@ That smoke now covers both the original vertical slice and a tiny pilot run, inc
 - Methodology details live in [`docs/methodology.md`](docs/methodology.md).
 - Brax integration assumptions and hook points live in [`docs/integration.md`](docs/integration.md).
 - Real pilot operating instructions live in [`docs/pilot_runbook.md`](docs/pilot_runbook.md).
+- After a `proceed` decision, generate the scheduler handoff manifest with:
+
+```bash
+python3 scripts/run_sweep.py \
+  --from-pilot-report results/runs/pilot_gate/pilot_report.json \
+  --output results/sweep_manifest.json
+```
+
 - Project-specific contributor guidance for agents and maintainers lives in [`AGENTS.md`](AGENTS.md).

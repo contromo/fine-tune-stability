@@ -26,7 +26,35 @@ python3 scripts/preflight_pilot.py --profile production --allow-cpu
 
 `preflight.json` is written to `results/runs/pilot_gate/preflight.json` by default. Running the real pilot later reruns preflight and overwrites that file intentionally so the embedded provenance matches the actual pilot run.
 
-## 3. Run the production-profile pilot
+## 3. Run the GPU smoke pilot first
+
+Validate the production path cheaply on the real host before committing to the full pilot:
+
+```bash
+python3 scripts/run_pilot.py \
+  --profile production \
+  --run-id pilot_gpu_smoke \
+  --output-dir results/runs/pilot_gpu_smoke \
+  --seeds 0,1 \
+  --pretrain-steps 50000 \
+  --eval-interval 10000 \
+  --fine-tune-steps 50016 \
+  --baseline-eval-episodes 10 \
+  --throughput-probe-updates 50
+```
+
+Smoke success criteria:
+
+- `preflight.json` reports the expected GPU backend and devices
+- shared pretrain completes
+- both fine-tune seeds emit at least 3 post-warmup eval rows
+- `extreme_probe/summary.json` exists and reports finite throughput
+- `pilot_report.json` is written
+- no OOM, backend, or MuJoCo/Brax wiring failures occur
+
+The smoke run's `decision` field is advisory only. Use the structural criteria above to decide whether to continue to the full pilot.
+
+## 4. Run the production-profile pilot
 
 ```bash
 python3 scripts/run_pilot.py --profile production
@@ -38,11 +66,14 @@ Useful overrides:
 python3 scripts/run_pilot.py \
   --profile production \
   --output-dir results/runs/pilot_gate_alt \
+  --decision-dir docs/decisions \
   --pretrain-steps 500000 \
   --fine-tune-steps 1000000
 ```
 
-## 4. Understand the artifacts
+`--force` is global in this milestone. If any phase already has `summary.json`, rerunning without `--force` fails before that phase starts. Rerunning with `--force` permits overwriting completed phases globally; there is no per-phase force selector yet.
+
+## 5. Understand the artifacts
 
 Pilot artifacts live under `results/runs/<pilot_id>/`:
 
@@ -54,8 +85,10 @@ Pilot artifacts live under `results/runs/<pilot_id>/`:
 - `extreme_probe/summary.json`
 
 `pilot_report.json` embeds a stable `environment` block plus `preflight_path`. `pilot.log` appends a timestamped header on each attempt so interrupted reruns are visible in one file.
+A durable decision stub is also written to `docs/decisions/YYYY-MM-DD-<run_id>.md` by default. Override the location with `--decision-dir` if the pilot is being orchestrated outside the repo checkout.
+If the decision file already exists and has been edited, rerunning with the same date and `run_id` fails; use a different `run_id` or clean up the old note first.
 
-## 5. Interruption semantics
+## 6. Interruption semantics
 
 There is no resume in this milestone.
 
@@ -63,16 +96,39 @@ There is no resume in this milestone.
 - The current code does not skip completed phases.
 - `summary.json` is written last for each phase and is reserved as the future completion sentinel for a later resume-focused change.
 
-## 6. Decision handling
+## 7. Decision handling
 
 - `proceed`
-  Use `scripts/run_sweep.py` to generate the manifest, then hand the manifest and single-run CLI to the external scheduler.
+  Generate the manifest from the pilot report, then hand the manifest and single-run CLI to the external scheduler.
+  ```bash
+  python3 scripts/run_sweep.py \
+    --from-pilot-report results/runs/pilot_gate/pilot_report.json \
+    --output results/sweep_manifest.json
+  ```
 - `adjust`
-  Change shift strength and/or calibration settings, then rerun the pilot.
+  Change shift strength and/or threshold calibration only, then rerun the pilot.
 - `fail`
   Fix infrastructure, runtime, or budget issues before attempting any sweep.
 
-## 7. CPU-host validation
+### Adjust matrix
+
+- Majority `drop_fraction < 0.15`
+  Increase shift severity only.
+- Majority `drop_fraction > 0.50`
+  Decrease shift severity only.
+- Drop band is acceptable, but `threshold_drop_fraction > 0.50`
+  Keep shift fixed and adjust threshold only.
+- If multiple conditions hold simultaneously, or different seeds fall on opposite sides of the drop band
+  Adjust shift first, rerun, and only then reconsider threshold calibration.
+
+Threshold-only adjustments:
+
+- If `threshold_rule == "sigma"`, reduce `collapse_c` by `0.5`.
+- If `threshold_rule == "floor"`, reduce `collapse_rho` by `0.05`.
+
+Do not change `num_envs`, `eval_interval`, or other operational knobs as part of an `adjust` response in this milestone.
+
+## 8. CPU-host validation
 
 On a CPU development machine:
 

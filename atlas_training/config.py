@@ -26,6 +26,8 @@ class VerticalSliceConfig:
     num_envs: int = 32
     eval_episodes: int = 10
     baseline_eval_episodes: int | None = None
+    collapse_c: float = 2.0
+    collapse_rho: float = 0.2
     gamma: float = 0.99
     learning_rate: float = 3e-4
     batch_size: int = 256
@@ -111,6 +113,12 @@ def add_common_cli_args(
     parser.add_argument("--diagnostic-batch-size", type=int, default=256)
     parser.add_argument("--episode-length", type=int, default=1000)
     parser.add_argument("--action-repeat", type=int, default=1)
+    return parser
+
+
+def add_collapse_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--collapse-c", type=float, default=2.0)
+    parser.add_argument("--collapse-rho", type=float, default=0.2)
     return parser
 
 
