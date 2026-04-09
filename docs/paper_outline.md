@@ -144,11 +144,17 @@ Protocol summary:
 2. Freeze a baseline return distribution on the shifted evaluation domain.
 3. Fine-tune from the pretrained checkpoint in the shifted domain.
 4. Emit evaluation diagnostics after warmup-eligible checkpoints.
-5. Stop early on collapse if `stop_on_collapse = True` remains part of the preregistered design.
+5. Stop early on first threshold-defined collapse with `stop_on_collapse = True`.
+
+This choice is locked for the paper plan:
+
+- early stopping is retained to avoid wasting compute on runs that have already crossed the collapse threshold
+- post-collapse recovery is out of scope for the main study
+- time-to-collapse analyses must therefore treat non-collapsing runs as right-censored
 
 Important design note:
 
-The current pilot flow uses a shared pretrain checkpoint and then varies fine-tune seeds. If the final paper keeps that design, the claims must be limited to fine-tune-seed variability conditional on a fixed pretrain. If broader robustness claims are desired, pretrain-seed variation should become an explicit factor or an added sensitivity analysis.
+The main sweep keeps a shared pretrain checkpoint and varies fine-tune seeds only. Claims from the factorial therefore remain conditional on a fixed pretrained policy. To make that limitation defensible without expanding the full factorial, add a small sensitivity check on one representative cell (`n = 3`, `critic_width = 256`) using `2-3` additional pretrain seeds.
 
 ### 4.4 Factorial Sweep
 
@@ -223,7 +229,7 @@ Rationale:
 Primary outcomes:
 
 - collapse incidence by condition
-- time to first collapse
+- Kaplan-Meier-style time to first collapse by condition
 - environment steps to first warning
 - warning lead time before collapse
 - global ROC-AUC for predicting collapse within the configured horizon
@@ -235,6 +241,7 @@ Secondary outcomes:
 - variance and `q95_abs_td` trajectories
 - false-positive warning frequency in non-collapsing runs
 - interaction between factor settings and warning reliability
+- realized-versus-scheduled training budget, reported as a consequence of early stopping rather than a direct quality metric
 
 ### 4.9 Pilot Gate and Study Integrity
 
@@ -263,9 +270,12 @@ Recommended minimum analysis commitments:
 - Report per-cell means with uncertainty intervals across seeds.
 - Treat each run as the basic unit of analysis.
 - For collapse incidence, report binomial uncertainty intervals and effect sizes between cells.
+- For time-to-collapse, use Kaplan-Meier-style survival curves with non-collapsing runs right-censored at their final realized evaluation step.
+- Report median time-to-collapse only when the survival curve crosses `0.5`; otherwise report restricted-horizon survival summaries.
 - For warning quality, report ROC-AUC, mean lead time, false-positive rate, and the count of runs with usable warning-before-collapse events.
 - Compare the TD-based warning score against the raw return-drop baseline on the same checkpoints and with the same metrics.
-- Separate censored runs from non-collapsed runs if early stopping on collapse is enabled.
+- Do not interpret raw final environment steps or final return as directly comparable across conditions without accounting for early stopping.
+- Do not make claims about post-collapse recovery in the main study.
 - Keep the primary endpoint list short and locked before the sweep begins.
 
 ### 4.11 Threats to Validity
@@ -273,7 +283,7 @@ Recommended minimum analysis commitments:
 Internal validity concerns:
 
 - collapse thresholds depend on finite baseline evaluation samples
-- early stopping on collapse changes run length and may complicate comparisons
+- early stopping on collapse changes run length, creates right-censoring, and prevents recovery analysis
 - warning metrics are conditioned on sufficient recent-buffer coverage
 - private Brax internals may affect future reproducibility if the dependency version changes
 
@@ -305,11 +315,11 @@ Report:
 
 Suggested table:
 
-- Table 1. Collapse incidence, median time-to-collapse, and final return by `n-step x critic-width`
+- Table 1. Collapse incidence, Kaplan-Meier-style time-to-collapse summaries, and scheduled-versus-realized training budget by `n-step x critic-width`
 
 Suggested text scaffold:
 
-Under the shifted fine-tuning regime, collapse occurred in [RESULT] of [RESULT] runs. The lowest collapse incidence was observed for [RESULT], while [RESULT] exhibited the highest collapse rate. The effect of backup horizon was [RESULT], and the effect of critic width was [RESULT].
+Under the shifted fine-tuning regime, collapse occurred in [RESULT] of [RESULT] runs. The lowest collapse incidence was observed for [RESULT], while [RESULT] exhibited the highest collapse rate. Kaplan-Meier-style time-to-collapse analysis showed [RESULT]. Because runs stop on first collapse, we do not interpret post-collapse recovery from this study.
 
 ### 5.3 Warning-Signal Results
 
@@ -332,6 +342,7 @@ Suggested figure:
 - Figure 1. Fine-tune return trajectories by condition
 - Figure 2. Score trajectories aligned to first collapse
 - Figure 3. Variance versus return snapshots over training
+- Figure 4. Survival curves for time to first collapse by condition
 
 ### 5.5 Ablations and Sensitivity Checks
 
@@ -339,7 +350,7 @@ Suggested figure:
 
 Candidates:
 
-- shared-pretrain versus multiple-pretrain sensitivity
+- shared-pretrain versus multiple-pretrain sensitivity on the representative cell (`n = 3`, `critic_width = 256`) with `2-3` alternate pretrain seeds
 - threshold parameter sensitivity (`collapse_c`, `collapse_rho`)
 - effect of early stopping on summary metrics
 - effect of prediction horizon on warning AUC
@@ -406,8 +417,8 @@ The paper framing is already locked:
 
 The remaining high-value design decisions to settle before spending real compute are:
 
-1. Decide whether the paper treats pretrain checkpoint randomness as fixed, controlled, or experimental. The current sweep varies fine-tune seeds only.
-2. Decide whether `stop_on_collapse = True` is part of the final design. If yes, specify how censored trajectories will be analyzed.
+1. Keep the main 48-run sweep on a shared pretrain checkpoint, and add a pretrain-seed sensitivity check on the representative cell (`n = 3`, `critic_width = 256`) with `2-3` alternate pretrain seeds.
+2. Keep `stop_on_collapse = True` and analyze time-to-collapse with Kaplan-Meier-style right-censoring. Post-collapse recovery is out of scope for the main study.
 3. Finalize the exact raw return-drop baseline formula and warning thresholding rule before the full sweep.
 4. Lock the pilot-to-sweep handoff rule so shift tuning does not continue after seeing main-study outcomes.
 
