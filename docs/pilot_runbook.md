@@ -99,16 +99,25 @@ There is no resume in this milestone.
 ## 7. Decision handling
 
 - `proceed`
-  Generate the manifest from the pilot report, then hand the manifest and single-run CLI to the external scheduler.
+  Generate the manifest from the pilot report, then hand the manifest and single-run CLI to the external scheduler. This handoff is only valid for a production-profile pilot run on the target hardware, and the decision note must be recorded before launch.
   ```bash
   python3 scripts/run_sweep.py \
     --from-pilot-report results/runs/pilot_gate/pilot_report.json \
     --output results/sweep_manifest.json
   ```
+  The default manifest uses the 2M-step main-study horizon. If you intentionally launch a different horizon, rerun the pilot with matching `--sweep-fine-tune-steps` and pass the same `--fine-tune-steps` override here.
+  Generate the representative-cell pretrain-sensitivity manifest separately:
+  ```bash
+  python3 scripts/run_pretrain_sensitivity.py \
+    --from-pilot-report results/runs/pilot_gate/pilot_report.json \
+    --output results/pretrain_sensitivity_manifest.json
+  ```
 - `adjust`
   Change shift strength and/or threshold calibration only, then rerun the pilot.
 - `fail`
   Fix infrastructure, runtime, or budget issues before attempting any sweep.
+
+Do not generate either manifest from a pilot that ended in `adjust` or `fail`, and do not reuse an outdated pilot report after changing the intended sweep horizon.
 
 ### Adjust matrix
 

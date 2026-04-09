@@ -58,6 +58,7 @@ class PilotTest(unittest.TestCase):
         args = parse_args(["--pretrain-steps", "1000"])
         self.assertEqual(args.seed_values, (0, 1, 2))
         self.assertEqual(args.fine_tune_steps, DEFAULT_FINE_TUNE_STEPS)
+        self.assertEqual(args.sweep_fine_tune_steps, DEFAULT_FINE_TUNE_STEPS)
         self.assertEqual(args.baseline_eval_episodes, 50)
         self.assertEqual(args.decision_dir, DEFAULT_DECISION_DIR)
 
@@ -221,14 +222,16 @@ class PilotTest(unittest.TestCase):
         budget = build_budget_summary([10.0, 20.0], 30.0)
         self.assertEqual(budget["hours_per_100m_small"], {"mean": 15.0, "min": 10.0, "max": 20.0})
         self.assertEqual(budget["hours_per_100m_extreme"], 30.0)
-        self.assertEqual(budget["sweep_hours_optimistic"], 720.0)
-        self.assertEqual(budget["sweep_hours_conservative"], 1440.0)
+        self.assertEqual(budget["sweep_fine_tune_steps"], DEFAULT_FINE_TUNE_STEPS)
+        self.assertEqual(budget["sweep_hours_optimistic"], 14.4)
+        self.assertEqual(budget["sweep_hours_conservative"], 28.8)
 
     def test_build_budget_summary_handles_probe_failure_with_infinite_conservative_bound(self) -> None:
         budget = build_budget_summary([10.0], float("inf"))
         self.assertEqual(budget["hours_per_100m_small"], {"mean": 10.0, "min": 10.0, "max": 10.0})
         self.assertIsNone(budget["hours_per_100m_extreme"])
-        self.assertEqual(budget["sweep_hours_optimistic"], 480.0)
+        self.assertEqual(budget["sweep_fine_tune_steps"], DEFAULT_FINE_TUNE_STEPS)
+        self.assertEqual(budget["sweep_hours_optimistic"], 9.6)
         self.assertEqual(budget["sweep_hours_conservative"], float("inf"))
 
     def test_build_pilot_report_treats_missing_probe_as_zero_throughput(self) -> None:
@@ -301,6 +304,7 @@ class PilotTest(unittest.TestCase):
 
         self.assertEqual(report["extreme_probe"]["steps_per_second"], None)
         self.assertEqual(report["budget"]["sweep_hours_conservative"], float("inf"))
+        self.assertEqual(report["budget"]["sweep_fine_tune_steps"], DEFAULT_FINE_TUNE_STEPS)
         self.assertEqual(report["created_at"], "2026-04-09T00:00:00+00:00")
         self.assertEqual(report["preflight_path"], layout.output_dir / "preflight.json")
         self.assertEqual(

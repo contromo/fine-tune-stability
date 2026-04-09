@@ -57,11 +57,13 @@ Run the pure-Python test suite:
 python3 -m unittest discover -s tests -v
 ```
 
-Generate the preregistered sweep manifest:
+Generate the main-study sweep manifest:
 
 ```bash
 python3 scripts/run_sweep.py --output results/sweep_manifest.json
 ```
+
+This defaults to `2,000,000` fine-tune steps per run. Longer horizons require an explicit `--fine-tune-steps` override.
 
 Run a small pretrain checkpoint:
 
@@ -193,12 +195,22 @@ That smoke now covers both the original vertical slice and a tiny pilot run, inc
 - Methodology details live in [`docs/methodology.md`](docs/methodology.md).
 - Brax integration assumptions and hook points live in [`docs/integration.md`](docs/integration.md).
 - Real pilot operating instructions live in [`docs/pilot_runbook.md`](docs/pilot_runbook.md).
-- After a `proceed` decision, generate the scheduler handoff manifest with:
+- After a target-hardware production pilot returns `decision = proceed`, generate the scheduler handoff manifest with:
 
 ```bash
 python3 scripts/run_sweep.py \
   --from-pilot-report results/runs/pilot_gate/pilot_report.json \
   --output results/sweep_manifest.json
 ```
+
+- Generate the representative-cell pretrain-sensitivity manifest separately with:
+
+```bash
+python3 scripts/run_pretrain_sensitivity.py \
+  --from-pilot-report results/runs/pilot_gate/pilot_report.json \
+  --output results/pretrain_sensitivity_manifest.json
+```
+
+- Do not generate any sweep or sensitivity manifest from an outdated pilot report or from a pilot that ended in `adjust` or `fail`.
 
 - Project-specific contributor guidance for agents and maintainers lives in [`AGENTS.md`](AGENTS.md).
