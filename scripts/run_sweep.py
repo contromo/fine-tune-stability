@@ -34,7 +34,7 @@ def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[fl
     report = json.loads(path.read_text(encoding="utf-8"))
     budget = report.get("budget", {})
     pilot_hours = budget.get("hours_per_100m_extreme")
-    if pilot_hours is None or not math.isfinite(float(pilot_hours)):
+    if pilot_hours is None or not math.isfinite(pilot_hours):
         raise ValueError("pilot report is missing a finite budget.hours_per_100m_extreme")
     pilot_hours_value = float(pilot_hours)
     return pilot_hours_value, {
