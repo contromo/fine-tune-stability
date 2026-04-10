@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
+from atlas.config import DEFAULT_SWEEP_FINE_TUNE_STEPS, estimate_run_hours
 from atlas_training.config import VerticalSliceConfig, add_collapse_cli_args, add_shift_cli_args, shift_from_args
 from atlas_training.diagnostics import write_diagnostic_summary
 from atlas_training.preflight import (
@@ -26,7 +27,7 @@ REPRESENTATIVE_N_STEP = 1
 REPRESENTATIVE_CRITIC_WIDTH = 256
 EXTREMAL_N_STEP = 10
 EXTREMAL_CRITIC_WIDTH = 1024
-DEFAULT_FINE_TUNE_STEPS = 2_000_000
+DEFAULT_FINE_TUNE_STEPS = DEFAULT_SWEEP_FINE_TUNE_STEPS
 DEFAULT_BASELINE_EVAL_EPISODES = 50
 DEFAULT_THROUGHPUT_PROBE_UPDATES = 500
 DEFAULT_PREDICTION_HORIZON = 10
@@ -172,18 +173,27 @@ def threshold_drop_fraction(mu0: float, threshold: float) -> float:
 def build_budget_summary(
     representative_hours_per_100m: Sequence[float],
     extreme_hours_per_100m: float,
+    *,
+    sweep_fine_tune_steps: int = DEFAULT_SWEEP_FINE_TUNE_STEPS,
 ) -> dict[str, Any]:
     representative_hours_stats = summarize_numeric(representative_hours_per_100m)
     budget = {
         "hours_per_100m_small": representative_hours_stats,
         "hours_per_100m_extreme": None if not math.isfinite(extreme_hours_per_100m) else round(extreme_hours_per_100m, 6),
+        "sweep_fine_tune_steps": sweep_fine_tune_steps,
         "sweep_hours_optimistic": None,
         "sweep_hours_conservative": math.inf,
     }
     if representative_hours_stats is not None:
-        budget["sweep_hours_optimistic"] = round(SWEEP_RUN_COUNT * representative_hours_stats["mean"], 6)
+        budget["sweep_hours_optimistic"] = round(
+            SWEEP_RUN_COUNT * estimate_run_hours(representative_hours_stats["mean"], sweep_fine_tune_steps),
+            6,
+        )
     if math.isfinite(extreme_hours_per_100m):
-        budget["sweep_hours_conservative"] = round(SWEEP_RUN_COUNT * extreme_hours_per_100m, 6)
+        budget["sweep_hours_conservative"] = round(
+            SWEEP_RUN_COUNT * estimate_run_hours(extreme_hours_per_100m, sweep_fine_tune_steps),
+            6,
+        )
     return budget
 
 
@@ -340,6 +350,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--baseline-eval-episodes",
         type=int,
         default=profile_defaults.get("baseline_eval_episodes", DEFAULT_BASELINE_EVAL_EPISODES),
+    )
+    parser.add_argument(
+        "--sweep-fine-tune-steps",
+        type=int,
+        default=DEFAULT_SWEEP_FINE_TUNE_STEPS,
+        help="target fine-tune horizon to use when scaling pilot throughput into the projected sweep budget",
     )
     add_collapse_cli_args(parser)
     parser.add_argument("--batch-size", type=int, default=256)
@@ -649,7 +665,11 @@ def _build_pilot_report(
     representative_throughput_stats = summarize_numeric(representative_speeds)
     extreme_steps_per_second = float(probe.summary["steps_per_second"]) if probe.summary is not None else 0.0
     extreme_hours_per_100m = hours_per_100m(extreme_steps_per_second)
-    budget = build_budget_summary(representative_hours, extreme_hours_per_100m)
+    budget = build_budget_summary(
+        representative_hours,
+        extreme_hours_per_100m,
+        sweep_fine_tune_steps=args.sweep_fine_tune_steps,
+    )
 
     decision, reasons = classify_pilot_gate(seed_results, float(budget["sweep_hours_conservative"]))
 

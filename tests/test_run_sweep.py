@@ -22,7 +22,7 @@ def _load_script(path: Path):
 
 
 class RunSweepTest(unittest.TestCase):
-    def test_resolve_budget_source_reads_conservative_budget_from_pilot_report(self) -> None:
+    def test_resolve_budget_source_scales_budget_from_pilot_report_to_default_horizon(self) -> None:
         module = _load_script(ROOT / "scripts" / "run_sweep.py")
         with tempfile.TemporaryDirectory() as tmpdir:
             report_path = Path(tmpdir) / "pilot_report.json"
@@ -32,14 +32,16 @@ class RunSweepTest(unittest.TestCase):
             )
             pilot_hours, source = module._resolve_budget_source(
                 SimpleNamespace(from_pilot_report=report_path, pilot_hours=None),
-                100_000_000,
+                2_000_000,
             )
-        self.assertEqual(pilot_hours, 12.5)
+        self.assertEqual(pilot_hours, 0.25)
         self.assertEqual(source["mode"], "pilot_report")
         self.assertEqual(source["pilot_report"], str(report_path))
-        self.assertIn("100M-step sweep run", source["assumption"])
+        self.assertEqual(source["pilot_hours_per_100m"], 12.5)
+        self.assertEqual(source["target_fine_tune_steps"], 2_000_000)
+        self.assertIn("2000000-step sweep run", source["assumption"])
 
-    def test_pilot_hours_from_report_rejects_non_100m_sweep_with_exact_message(self) -> None:
+    def test_pilot_hours_from_report_supports_explicit_nondefault_horizon(self) -> None:
         module = _load_script(ROOT / "scripts" / "run_sweep.py")
         with tempfile.TemporaryDirectory() as tmpdir:
             report_path = Path(tmpdir) / "pilot_report.json"
@@ -47,8 +49,10 @@ class RunSweepTest(unittest.TestCase):
                 json.dumps({"budget": {"hours_per_100m_extreme": 12.5}}) + "\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, f"^{module.NON_100M_SWEEP_ERROR}$"):
-                module._pilot_hours_from_report(report_path, 50_000_000)
+            pilot_hours, source = module._pilot_hours_from_report(report_path, 50_000_000)
+        self.assertEqual(pilot_hours, 6.25)
+        self.assertEqual(source["pilot_hours_per_100m"], 12.5)
+        self.assertEqual(source["target_fine_tune_steps"], 50_000_000)
 
     def test_main_writes_manifest_with_pilot_report_budget_source(self) -> None:
         module = _load_script(ROOT / "scripts" / "run_sweep.py")
@@ -60,14 +64,27 @@ class RunSweepTest(unittest.TestCase):
                 json.dumps({"budget": {"hours_per_100m_extreme": 8.25}}) + "\n",
                 encoding="utf-8",
             )
-            args = SimpleNamespace(output=output_path, pilot_hours=None, from_pilot_report=report_path)
+            args = SimpleNamespace(output=output_path, pilot_hours=None, from_pilot_report=report_path, fine_tune_steps=2_000_000)
             with mock.patch.object(module, "parse_args", return_value=args):
                 module.main()
 
             manifest = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["budget_source"]["mode"], "pilot_report")
-            self.assertEqual(manifest["budget_source"]["pilot_hours_per_run"], 8.25)
-            self.assertEqual(manifest["budget_table"][-1]["pilot_hours_per_run"], 8.25)
+            self.assertEqual(manifest["hyperparameters"]["total_fine_tune_steps"], 2_000_000)
+            self.assertEqual(manifest["budget_source"]["pilot_hours_per_run"], 0.165)
+            self.assertEqual(manifest["budget_table"][-1]["pilot_hours_per_run"], 0.165)
+
+    def test_main_honors_explicit_fine_tune_step_override(self) -> None:
+        module = _load_script(ROOT / "scripts" / "run_sweep.py")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "sweep_manifest.json"
+            args = SimpleNamespace(output=output_path, pilot_hours=1.5, from_pilot_report=None, fine_tune_steps=5_000_000)
+            with mock.patch.object(module, "parse_args", return_value=args):
+                module.main()
+
+            manifest = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["hyperparameters"]["total_fine_tune_steps"], 5_000_000)
+            self.assertEqual(manifest["runs"][0]["train_steps"], 5_000_000)
 
 
 if __name__ == "__main__":
