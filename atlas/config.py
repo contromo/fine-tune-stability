@@ -6,6 +6,7 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 from atlas.diagnostics import DEFAULT_TRIGGER_THRESHOLD
 
 HOURS_PER_100M_NORMALIZATION_STEPS = 100_000_000
+ATLAS_HYPERPARAMETERS_COMPAT_FINE_TUNE_STEPS = HOURS_PER_100M_NORMALIZATION_STEPS
 DEFAULT_SWEEP_FINE_TUNE_STEPS = 2_000_000
 REPRESENTATIVE_PRETRAIN_SENSITIVITY_N_STEP = 3
 REPRESENTATIVE_PRETRAIN_SENSITIVITY_CRITIC_WIDTH = 256
@@ -54,7 +55,9 @@ class AtlasHyperparameters:
     trigger_threshold: float = DEFAULT_TRIGGER_THRESHOLD
     trigger_hold_evals: int = 2
     prediction_horizon_evals: int = 10
-    total_fine_tune_steps: int = DEFAULT_SWEEP_FINE_TUNE_STEPS
+    # Keep the dataclass constructor's historical 100M default for compatibility
+    # with external callers; repo-local study defaults go through default_hyperparameters().
+    total_fine_tune_steps: int = ATLAS_HYPERPARAMETERS_COMPAT_FINE_TUNE_STEPS
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -107,7 +110,7 @@ def default_shift_spec() -> ShiftSpec:
 
 
 def default_hyperparameters() -> AtlasHyperparameters:
-    return AtlasHyperparameters()
+    return AtlasHyperparameters(total_fine_tune_steps=DEFAULT_SWEEP_FINE_TUNE_STEPS)
 
 
 def estimate_run_hours(hours_per_100m: float, total_fine_tune_steps: int) -> float:
@@ -189,6 +192,8 @@ def generate_pretrain_sensitivity_sweep(
 
 
 def build_budget_table(pilot_hours_per_run: float, sweep: Iterable[SweepCell]) -> List[Dict[str, object]]:
+    # pilot_hours_per_run is already scaled to the actual per-run horizon. Callers
+    # should not pass 100M-normalized throughput here.
     rows: List[Dict[str, object]] = []
     sweep_list = list(sweep)
 

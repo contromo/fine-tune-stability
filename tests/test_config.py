@@ -3,10 +3,12 @@ from __future__ import annotations
 import unittest
 
 from atlas.config import (
+    ATLAS_HYPERPARAMETERS_COMPAT_FINE_TUNE_STEPS,
     DEFAULT_SWEEP_FINE_TUNE_STEPS,
     HOURS_PER_100M_NORMALIZATION_STEPS,
     REPRESENTATIVE_PRETRAIN_SENSITIVITY_CRITIC_WIDTH,
     REPRESENTATIVE_PRETRAIN_SENSITIVITY_N_STEP,
+    AtlasHyperparameters,
     build_budget_table,
     default_hyperparameters,
     default_pretrain_sensitivity_pretrain_seeds,
@@ -21,6 +23,9 @@ class ConfigTest(unittest.TestCase):
     def test_default_hyperparameters_reuse_trigger_threshold_constant(self) -> None:
         self.assertEqual(default_hyperparameters().trigger_threshold, DEFAULT_TRIGGER_THRESHOLD)
         self.assertEqual(default_hyperparameters().total_fine_tune_steps, DEFAULT_SWEEP_FINE_TUNE_STEPS)
+
+    def test_atlas_hyperparameters_constructor_keeps_compatibility_default(self) -> None:
+        self.assertEqual(AtlasHyperparameters().total_fine_tune_steps, ATLAS_HYPERPARAMETERS_COMPAT_FINE_TUNE_STEPS)
 
     def test_generate_sweep_matches_preregistered_run_count(self) -> None:
         sweep = generate_sweep()

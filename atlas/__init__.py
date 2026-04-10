@@ -18,6 +18,7 @@ from .config import (
     generate_pretrain_sensitivity_sweep,
     generate_sweep,
 )
+from .manifest_utils import parse_seed_csv, pilot_hours_from_report, positive_int
 from .diagnostics import (
     DiagnosticSnapshot,
     InstabilityTrigger,
@@ -62,7 +63,10 @@ __all__ = [
     "extract_timeout_flag",
     "generate_pretrain_sensitivity_sweep",
     "generate_sweep",
+    "parse_seed_csv",
     "pearson_correlation",
+    "pilot_hours_from_report",
+    "positive_int",
     "roc_auc",
     "summarize_td_errors",
     "td_error",

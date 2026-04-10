@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -18,16 +17,9 @@ from atlas.config import (
     HOURS_PER_100M_NORMALIZATION_STEPS,
     build_budget_table,
     default_hyperparameters,
-    estimate_run_hours,
     generate_sweep,
 )
-
-
-def _positive_int(raw_value: str) -> int:
-    value = int(raw_value)
-    if value <= 0:
-        raise argparse.ArgumentTypeError("value must be positive")
-    return value
+from atlas.manifest_utils import pilot_hours_from_report, positive_int
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=Path("results/sweep_manifest.json"))
     parser.add_argument(
         "--fine-tune-steps",
-        type=_positive_int,
+        type=positive_int,
         default=DEFAULT_SWEEP_FINE_TUNE_STEPS,
         help="per-run fine-tune horizon for the main sweep manifest; defaults to the 2M-step main study plan",
     )
@@ -46,24 +38,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:
-    report = json.loads(path.read_text(encoding="utf-8"))
-    budget = report.get("budget", {})
-    pilot_hours = budget.get("hours_per_100m_extreme")
-    if pilot_hours is None or not math.isfinite(pilot_hours):
-        raise ValueError("pilot report is missing a finite budget.hours_per_100m_extreme")
-    pilot_hours_per_100m = float(pilot_hours)
-    pilot_hours_value = estimate_run_hours(pilot_hours_per_100m, total_fine_tune_steps)
-    return pilot_hours_value, {
-        "mode": "pilot_report",
-        "pilot_report": str(path),
-        "pilot_hours_per_100m": pilot_hours_per_100m,
-        "pilot_hours_per_run": pilot_hours_value,
-        "target_fine_tune_steps": total_fine_tune_steps,
-        "assumption": (
-            "budget.hours_per_100m_extreme is scaled linearly from the report's 100M-step normalization "
-            f"to the requested {total_fine_tune_steps}-step sweep run"
-        ),
-    }
+    return pilot_hours_from_report(path, total_fine_tune_steps, run_label="sweep run")
 
 
 def _resolve_budget_source(args: argparse.Namespace, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:

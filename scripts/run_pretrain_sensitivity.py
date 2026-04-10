@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -21,44 +20,13 @@ from atlas.config import (
     build_budget_table,
     default_hyperparameters,
     default_pretrain_sensitivity_pretrain_seeds,
-    estimate_run_hours,
     generate_pretrain_sensitivity_sweep,
 )
-
-
-def _positive_int(raw_value: str) -> int:
-    value = int(raw_value)
-    if value <= 0:
-        raise argparse.ArgumentTypeError("value must be positive")
-    return value
-
-
-def _parse_seed_list(raw_value: str) -> tuple[int, ...]:
-    seeds = tuple(int(part.strip()) for part in raw_value.split(",") if part.strip())
-    if not seeds:
-        raise argparse.ArgumentTypeError("seed list must not be empty")
-    return seeds
+from atlas.manifest_utils import parse_seed_csv, pilot_hours_from_report, positive_int
 
 
 def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:
-    report = json.loads(path.read_text(encoding="utf-8"))
-    budget = report.get("budget", {})
-    pilot_hours = budget.get("hours_per_100m_extreme")
-    if pilot_hours is None or not math.isfinite(pilot_hours):
-        raise ValueError("pilot report is missing a finite budget.hours_per_100m_extreme")
-    pilot_hours_per_100m = float(pilot_hours)
-    pilot_hours_value = estimate_run_hours(pilot_hours_per_100m, total_fine_tune_steps)
-    return pilot_hours_value, {
-        "mode": "pilot_report",
-        "pilot_report": str(path),
-        "pilot_hours_per_100m": pilot_hours_per_100m,
-        "pilot_hours_per_run": pilot_hours_value,
-        "target_fine_tune_steps": total_fine_tune_steps,
-        "assumption": (
-            "budget.hours_per_100m_extreme is scaled linearly from the report's 100M-step normalization "
-            f"to the requested {total_fine_tune_steps}-step representative-cell sensitivity run"
-        ),
-    }
+    return pilot_hours_from_report(path, total_fine_tune_steps, run_label="representative-cell sensitivity run")
 
 
 def _resolve_budget_source(args: argparse.Namespace, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:
@@ -82,18 +50,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=Path("results/pretrain_sensitivity_manifest.json"))
     parser.add_argument(
         "--fine-tune-steps",
-        type=_positive_int,
+        type=positive_int,
         default=DEFAULT_SWEEP_FINE_TUNE_STEPS,
         help="per-run fine-tune horizon for the representative-cell sensitivity bundle",
     )
-    parser.add_argument("--pretrain-seeds", type=str, default=default_pretrain_seeds)
-    parser.add_argument("--fine-tune-seeds", type=str, default=default_finetune_seeds)
+    parser.add_argument("--pretrain-seeds", type=parse_seed_csv, default=parse_seed_csv(default_pretrain_seeds))
+    parser.add_argument("--fine-tune-seeds", type=parse_seed_csv, default=parse_seed_csv(default_finetune_seeds))
     budget_group = parser.add_mutually_exclusive_group()
     budget_group.add_argument("--pilot-hours", type=float, default=None)
     budget_group.add_argument("--from-pilot-report", type=Path, default=None)
     args = parser.parse_args()
-    args.pretrain_seed_values = _parse_seed_list(args.pretrain_seeds)
-    args.finetune_seed_values = _parse_seed_list(args.fine_tune_seeds)
+    args.pretrain_seed_values = args.pretrain_seeds
+    args.finetune_seed_values = args.fine_tune_seeds
     return args
 
 
