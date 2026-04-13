@@ -952,15 +952,20 @@ def _build_update_step_fn(runtime: dict[str, Any], replay_buffer, config: Vertic
             alpha_params=alpha_params,
             normalizer_params=training_state.normalizer_params,
         )
-        metrics = {
-            "critic_loss": float(critic_loss),
-            "actor_loss": float(actor_loss),
-            "alpha_loss": float(alpha_loss),
-            "alpha": float(jnp.exp(alpha_params)),
+        jax_metrics = {
+            "critic_loss": critic_loss,
+            "actor_loss": actor_loss,
+            "alpha_loss": alpha_loss,
+            "alpha": jnp.exp(alpha_params),
         }
+        return next_state, replay_state, jax_metrics
+
+    def update_step_wrapper(training_state, replay_state, key):
+        next_state, replay_state, jax_metrics = update_step(training_state, replay_state, key)
+        metrics = {k: float(v) for k, v in jax_metrics.items()}
         return next_state, replay_state, metrics
 
-    return update_step
+    return update_step_wrapper
 
 
 def _aggregate_transitions(batch_transition, gamma: float, aggregator: MultiStreamNStepAggregator) -> list[AtlasTransition]:
