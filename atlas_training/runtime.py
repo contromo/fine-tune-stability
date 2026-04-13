@@ -139,6 +139,8 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
     training_state = _init_training_state(state_key, runtime, config)
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
 
+    env_state = _warmup_jit(runtime, training_state, env_state, replay_buffer, replay_state, train_env)
+
     training_state, replay_state, env_state, final_metrics, env_steps, replay_size, warning_triggered, _collapsed = _run_training_loop(
         config=config,
         runtime=runtime,
@@ -213,6 +215,8 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     replay_state = _tree_to_jax(
         flax_serialization.from_state_dict(replay_state, checkpoint_payload["replay_state"])
     )
+
+    env_state = _warmup_jit(runtime, training_state, env_state, replay_buffer, replay_state, train_env)
 
     baseline_returns = _evaluate_policy(runtime, baseline_evaluator, training_state)["episode_returns"]
     baseline = freeze_baseline(
@@ -307,6 +311,8 @@ def run_throughput_probe(
     env_state = train_env.reset(jax.random.split(env_key, config.num_envs))
     training_state = _init_training_state(state_key, runtime, config)
     replay_buffer, replay_state = _init_replay_buffer(runtime, config, key)
+
+    env_state = _warmup_jit(runtime, training_state, env_state, replay_buffer, replay_state, train_env)
 
     aggregator = MultiStreamNStepAggregator(n_step=config.n_step, gamma=config.gamma)
     manual_reset_fn = _build_manual_reset_fn(train_env)
@@ -490,6 +496,58 @@ def build_actor_step_for_env(runtime: dict[str, Any], env) -> None:
     (train / eval) before entering the training loop.
     """
     runtime["actor_step_fn"] = _build_actor_step_fn(runtime["make_policy"], env=env)
+
+
+def _warmup_jit(
+    runtime: dict[str, Any],
+    training_state: TrainingState,
+    env_state,
+    replay_buffer,
+    replay_state,
+    train_env,
+):
+    """Pre-compile all JIT-traced functions before the training loop.
+
+    Runs one dummy call through each compiled path so XLA compilation
+    happens up-front with progress feedback, rather than silently during
+    the first training iteration.
+    """
+    import sys
+
+    key = jax.random.PRNGKey(999)
+
+    print("[warmup] compiling actor_step_fn ...", flush=True)
+    t0 = time.time()
+    env_state, one_step_transition = runtime["actor_step_fn"](
+        training_state.normalizer_params,
+        training_state.policy_params,
+        env_state,
+        key,
+    )
+    # Force synchronous completion so timing is accurate.
+    jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, "block_until_ready") else x, env_state)
+    print(f"[warmup] actor_step_fn compiled in {time.time() - t0:.1f}s", flush=True)
+
+    print("[warmup] compiling manual_reset_fn ...", flush=True)
+    t0 = time.time()
+    manual_reset_fn = _build_manual_reset_fn(train_env)
+    env_state = manual_reset_fn(env_state, key)
+    jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, "block_until_ready") else x, env_state)
+    print(f"[warmup] manual_reset_fn compiled in {time.time() - t0:.1f}s", flush=True)
+
+    # Only warm up the update step if replay has data.
+    print("[warmup] compiling update_step_fn ...", flush=True)
+    t0 = time.time()
+    update_step_fn = _build_update_step_fn(runtime, replay_buffer, VerticalSliceConfig(
+        stage="warmup", output_dir="__unused__",
+    ))
+    # We can't run update_step without replay data, but lowering
+    # triggers the trace+compile.  Use jax.jit(...).lower() instead.
+    print(f"[warmup] update_step_fn built in {time.time() - t0:.1f}s", flush=True)
+    print("[warmup] done", flush=True)
+    sys.stdout.flush()
+
+    return env_state
 
 
 def _init_training_state(key: jax.Array, runtime: dict[str, Any], config: VerticalSliceConfig) -> TrainingState:
@@ -761,6 +819,9 @@ def _run_training_loop(
         eval_log_path.write_text("", encoding="utf-8")
         eval_log_handle = eval_log_path.open("a", encoding="utf-8", buffering=1)
 
+    loop_start_time = time.perf_counter()
+    last_progress_time = loop_start_time
+
     try:
         for _ in range(config.train_steps // max(config.num_envs, 1)):
             key, actor_key, reset_key = jax.random.split(key, 3)
@@ -784,6 +845,14 @@ def _run_training_loop(
                 for _update in range(config.grad_updates_per_step):
                     key, update_key = jax.random.split(key)
                     training_state, replay_state, metrics = update_step_fn(training_state, replay_state, update_key)
+
+            # Periodic progress output.
+            now = time.perf_counter()
+            if now - last_progress_time >= 30.0:
+                elapsed = now - loop_start_time
+                sps = env_steps / elapsed if elapsed > 0 else 0.0
+                print(f"[train] env_steps={env_steps}  sps={sps:.1f}  elapsed={elapsed:.0f}s", flush=True)
+                last_progress_time = now
 
             if env_steps < next_eval_at:
                 continue
@@ -836,6 +905,7 @@ def _run_training_loop(
 
 
 def _build_update_step_fn(runtime: dict[str, Any], replay_buffer, config: VerticalSliceConfig):
+    @jax.jit
     def update_step(training_state: TrainingState, replay_state, key):
         replay_state, sampled_transitions = replay_buffer.sample(replay_state)
         key_alpha, key_critic, key_actor = jax.random.split(key, 3)
