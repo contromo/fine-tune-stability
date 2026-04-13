@@ -142,7 +142,7 @@ class TrainingRuntimeTest(unittest.TestCase):
             def insert(self, replay_state, _batch):
                 return replay_state
 
-        def fake_actor_step_fn(_normalizer_params, _policy_params, _train_env, env_state, _actor_key):
+        def fake_actor_step_fn(_normalizer_params, _policy_params, env_state, _actor_key):
             transition = SimpleNamespace(
                 observation={"state": np.asarray([[1.0]], dtype=np.float32)},
                 action=np.asarray([[0.0]], dtype=np.float32),
@@ -170,6 +170,8 @@ class TrainingRuntimeTest(unittest.TestCase):
             runtime_module, "_build_runtime", return_value={"actor_step_fn": fake_actor_step_fn}
         ), mock.patch.object(
             runtime_module, "_build_env", return_value=_FakeEnv()
+        ), mock.patch.object(
+            runtime_module, "build_actor_step_for_env"
         ), mock.patch.object(
             runtime_module, "_init_training_state", return_value=fake_training_state
         ), mock.patch.object(

@@ -129,6 +129,7 @@ def run_pretrain(config: VerticalSliceConfig) -> dict[str, Any]:
 
     runtime = _build_runtime(config)
     train_env = _build_env(config, batch_size=config.num_envs, domain="pretrain")
+    build_actor_step_for_env(runtime, train_env)
     eval_env = _build_env(config, batch_size=config.eval_episodes, domain="nominal_eval")
     evaluator = _build_evaluator(runtime, eval_env, config.eval_episodes)
 
@@ -198,6 +199,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
     )
     write_json(config.config_path(), config.to_dict())
     train_env = _build_env(config, batch_size=config.num_envs, domain="finetune")
+    build_actor_step_for_env(runtime, train_env)
     baseline_evaluator, evaluator = _build_finetune_evaluators(runtime, config)
 
     key = jax.random.PRNGKey(config.seed)
@@ -298,6 +300,7 @@ def run_throughput_probe(
 
     runtime = _build_runtime(config)
     train_env = _build_env(config, batch_size=config.num_envs, domain="finetune")
+    build_actor_step_for_env(runtime, train_env)
 
     key = jax.random.PRNGKey(config.seed)
     key, env_key, state_key = jax.random.split(key, 3)
@@ -323,7 +326,6 @@ def run_throughput_probe(
         env_state, one_step_transition = runtime["actor_step_fn"](
             training_state.normalizer_params,
             training_state.policy_params,
-            train_env,
             env_state,
             actor_key,
         )
@@ -475,9 +477,19 @@ def _build_runtime(config: VerticalSliceConfig) -> dict[str, Any]:
         "alpha_update": alpha_update,
         "critic_update": critic_update,
         "actor_update": actor_update,
-        "actor_step_fn": _build_actor_step_fn(make_policy),
+        "actor_step_fn": None,  # Built per-env via build_actor_step_for_env()
         "td_error_fn": _build_td_error_batch_fn(sac_network),
     }
+
+
+def build_actor_step_for_env(runtime: dict[str, Any], env) -> None:
+    """Build a JIT-compiled actor step that closes over *env*.
+
+    This avoids re-tracing the full environment pytree on every call and
+    lets JAX cache the compiled kernel.  Call this once per environment
+    (train / eval) before entering the training loop.
+    """
+    runtime["actor_step_fn"] = _build_actor_step_fn(runtime["make_policy"], env=env)
 
 
 def _init_training_state(key: jax.Array, runtime: dict[str, Any], config: VerticalSliceConfig) -> TrainingState:
@@ -604,12 +616,23 @@ def _make_fixed_randomization_fn(*, batch_size: int, friction: float, payload: f
     return randomize
 
 
-def _build_actor_step_fn(make_policy):
-    def actor_step(normalizer_params, policy_params, env, env_state, key):
+def _build_actor_step_fn(make_policy, env=None):
+    if env is not None:
+        # Close over env so JAX treats it as a compile-time constant
+        # rather than tracing through the full environment pytree each call.
+        @jax.jit
+        def actor_step(normalizer_params, policy_params, env_state, key):
+            policy = make_policy((normalizer_params, policy_params))
+            return acting.actor_step(env, env_state, policy, key, extra_fields=("truncation",))
+
+        return actor_step
+
+    # Fallback: env passed at call site (legacy path).
+    def actor_step_with_env(normalizer_params, policy_params, env, env_state, key):
         policy = make_policy((normalizer_params, policy_params))
         return acting.actor_step(env, env_state, policy, key, extra_fields=("truncation",))
 
-    return actor_step
+    return actor_step_with_env
 
 
 def _build_manual_reset_fn(env):
@@ -744,7 +767,6 @@ def _run_training_loop(
             env_state, one_step_transition = runtime["actor_step_fn"](
                 training_state.normalizer_params,
                 training_state.policy_params,
-                train_env,
                 env_state,
                 actor_key,
             )
