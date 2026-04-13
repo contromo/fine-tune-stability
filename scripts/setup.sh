@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv venv .venv
+VENV_PATH="${VENV_PATH:-.venv}"
+PYTHON_BIN="$VENV_PATH/bin/python"
+
+uv venv "$VENV_PATH"
 
 if [[ "${1:-}" == "--train" ]]; then
-  uv pip install --python .venv/bin/python -e ".[train]"
+  uv pip install --python "$PYTHON_BIN" -e ".[train]"
 else
-  uv pip install --python .venv/bin/python -e .
+  uv pip install --python "$PYTHON_BIN" -e .
 fi

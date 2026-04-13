@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import io
 import tempfile
@@ -38,6 +39,26 @@ class ImportBoundaryTest(unittest.TestCase):
     def test_preflight_pilot_imports_without_training_dependencies(self) -> None:
         module = _load_script(ROOT / "scripts" / "preflight_pilot.py")
         self.assertTrue(callable(module.parse_args))
+
+    def test_training_runtime_imports_playground_registry_from_internal_module(self) -> None:
+        source = (ROOT / "atlas_training" / "runtime.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        registry_imports = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and any(alias.name == "registry" for alias in node.names)
+        ]
+
+        self.assertTrue(
+            any(node.module == "mujoco_playground._src" for node in registry_imports),
+            "runtime.py should import registry from mujoco_playground._src",
+        )
+        self.assertFalse(
+            any(node.module == "mujoco_playground" for node in registry_imports),
+            "runtime.py should avoid top-level mujoco_playground imports",
+        )
 
     def test_run_pilot_teestream_delegates_unknown_attributes(self) -> None:
         module = _load_script(ROOT / "scripts" / "run_pilot.py")

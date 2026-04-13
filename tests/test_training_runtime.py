@@ -109,11 +109,15 @@ class TrainingRuntimeTest(unittest.TestCase):
         ), mock.patch.object(
             runtime_module, "_build_env", return_value=_FakeEnv()
         ), mock.patch.object(
+            runtime_module, "build_actor_step_for_env"
+        ), mock.patch.object(
             runtime_module, "_build_evaluator", return_value=object()
         ), mock.patch.object(
             runtime_module, "_init_training_state", return_value=object()
         ), mock.patch.object(
             runtime_module, "_init_replay_buffer", return_value=(object(), object())
+        ), mock.patch.object(
+            runtime_module, "_warmup_jit", side_effect=lambda *_args: object()
         ), mock.patch.object(
             runtime_module,
             "_run_training_loop",

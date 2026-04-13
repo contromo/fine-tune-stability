@@ -42,12 +42,36 @@ Training install:
 ./scripts/setup.sh --train
 ```
 
+Alternative venv location:
+
+```bash
+VENV_PATH=/abs/path/to/.venv ./scripts/setup.sh --train
+```
+
 Notes:
 
+- `.[train]` pins the known-good vertical-slice stack: `brax 0.14.2`, `jax 0.9.2`, `mujoco 3.6.0`, `mujoco-mjx 3.6.0`, and `playground 0.2.0`.
 - `.[train]` intentionally resolves the default `jax` package so CPU smoke runs work out of the box.
 - GPU users should replace or upgrade that JAX install with the platform-specific wheel set for their accelerator.
 - `playground` is the distribution name that provides the `mujoco_playground` import path used by this repo.
-- Brax is intentionally constrained to `>=0.14.2,<0.15` because `atlas_training` depends on some 0.14.x evaluator and replay internals.
+- Brax is pinned to `0.14.2` because `atlas_training` depends on 0.14.x evaluator and replay internals, and the current vertical slice is validated against that exact release.
+- `scripts/setup.sh` respects `VENV_PATH`, which is useful on hosted GPU boxes where the repo lives on a network filesystem.
+
+### Runpod / Network Filesystems
+
+On Runpod, `/workspace` is often a network-mounted volume. Creating a Python venv there can be very slow because wheel extraction writes thousands of files over the network.
+
+Prefer:
+
+```bash
+mkdir -p /root/.venvs /root/.cache/uv
+export UV_CACHE_DIR=/root/.cache/uv
+export UV_LINK_MODE=copy
+VENV_PATH=/root/.venvs/fine-tune-stability ./scripts/setup.sh --train
+ln -sfn /root/.venvs/fine-tune-stability .venv
+```
+
+Keep the repo and `results/` on `/workspace`, but keep the venv and UV cache on local container disk.
 
 ## Quickstart
 

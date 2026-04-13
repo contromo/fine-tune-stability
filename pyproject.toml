@@ -12,17 +12,17 @@ authors = [{name = "Codex"}]
 dependencies = []
 
 [project.optional-dependencies]
-# `jax` here intentionally resolves the default CPU wheel on most systems so
-# `./scripts/setup.sh --train` works for the local smoke test. GPU users should
-# install the platform-specific JAX/JAXlib build that matches their accelerator.
+# Keep the training stack pinned to the known-good vertical-slice versions.
+# GPU users should still replace the default CPU JAX wheel with the
+# platform-specific CUDA build that matches their accelerator.
 # `playground` is the distribution name that provides the `mujoco_playground`
 # import path used by this repo.
 train = [
-  "brax>=0.14.2,<0.15",
-  "jax>=0.9.2",
-  "mujoco>=3.6.0",
-  "mujoco-mjx>=3.6.0",
-  "playground>=0.2.0",
+  "brax==0.14.2",
+  "jax==0.9.2",
+  "mujoco==3.6.0",
+  "mujoco-mjx==3.6.0",
+  "playground==0.2.0",
 ]
 
 [tool.setuptools.packages.find]

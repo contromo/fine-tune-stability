@@ -26,7 +26,10 @@ from brax.training import types as brax_types
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
 from brax.training.agents.sac import networks as sac_networks
-from mujoco_playground import registry
+# Import the registry from the internal module directly. Some Playground
+# distributions eagerly import broken manipulation tasks from the package
+# root, but this vertical slice only needs the registry and wrappers.
+from mujoco_playground._src import registry
 from mujoco_playground._src import wrapper as playground_wrapper
 
 from atlas import InstabilityTrigger, MultiStreamNStepAggregator, RecentTransitionBuffer, summarize_td_errors, td_error

@@ -10,6 +10,22 @@ This is the canonical operator flow for running the pilot calibration gate on a 
 
 The default `jax` dependency installed by `.[train]` is the CPU build so local smoke runs work by default. For a real GPU pilot, replace that install with the accelerator-specific JAX/JAXlib wheel set that matches the target host before proceeding.
 
+On Runpod or any host where the repo lives on a network-mounted workspace, put the virtualenv on local container disk and keep only the checkout/results on the network volume:
+
+```bash
+mkdir -p /root/.venvs /root/.cache/uv
+export UV_CACHE_DIR=/root/.cache/uv
+export UV_LINK_MODE=copy
+VENV_PATH=/root/.venvs/fine-tune-stability ./scripts/setup.sh --train
+ln -sfn /root/.venvs/fine-tune-stability .venv
+```
+
+If the target host is a GPU box, replace the default CPU JAX wheel afterwards with the accelerator-specific build that matches the image:
+
+```bash
+uv pip install --python .venv/bin/python --upgrade "jax[cuda12]==0.9.2"
+```
+
 ## 2. Validate the host
 
 Standalone preflight:
