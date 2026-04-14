@@ -11,10 +11,11 @@ if str(ROOT) not in sys.path:
 
 
 def parse_args() -> argparse.Namespace:
-    from atlas_training.config import add_common_cli_args
+    from atlas_training.config import add_common_cli_args, add_shift_cli_args
 
     parser = argparse.ArgumentParser(description="Pretrain a Go1 SAC checkpoint for the Stability Atlas vertical slice.")
     add_common_cli_args(parser, output_dir_default=Path("results/runs/pretrain_go1"))
+    add_shift_cli_args(parser)
     return parser.parse_args()
 
 

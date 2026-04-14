@@ -60,6 +60,18 @@ class ImportBoundaryTest(unittest.TestCase):
             "runtime.py should avoid top-level mujoco_playground imports",
         )
 
+    def test_runtime_cli_builders_apply_shift_from_args(self) -> None:
+        source = (ROOT / "atlas_training" / "runtime.py").read_text(encoding="utf-8")
+
+        self.assertIn("shift=shift_from_args(args)", source)
+
+    def test_standalone_training_scripts_accept_shift_args(self) -> None:
+        pretrain_source = (ROOT / "scripts" / "run_pretrain.py").read_text(encoding="utf-8")
+        finetune_source = (ROOT / "scripts" / "run_finetune.py").read_text(encoding="utf-8")
+
+        self.assertIn("add_shift_cli_args", pretrain_source)
+        self.assertIn("add_shift_cli_args", finetune_source)
+
     def test_run_pilot_teestream_delegates_unknown_attributes(self) -> None:
         module = _load_script(ROOT / "scripts" / "run_pilot.py")
 

@@ -35,7 +35,13 @@ from mujoco_playground._src import wrapper as playground_wrapper
 from atlas import InstabilityTrigger, MultiStreamNStepAggregator, RecentTransitionBuffer, summarize_td_errors, td_error
 from atlas.time_limit import extract_timeout_flag
 from atlas.transitions import Transition as AtlasTransition
-from atlas_training.config import VerticalSliceConfig, build_run_id, checkpoint_signature, validate_checkpoint_compatibility
+from atlas_training.config import (
+    VerticalSliceConfig,
+    build_run_id,
+    checkpoint_signature,
+    shift_from_args,
+    validate_checkpoint_compatibility,
+)
 from atlas_training.diagnostics import (
     DiagnosticLogState,
     FrozenBaseline,
@@ -86,6 +92,7 @@ def run_pretrain_cli(args: argparse.Namespace) -> None:
         episode_length=args.episode_length,
         action_repeat=args.action_repeat,
         stop_on_collapse=False,
+        shift=shift_from_args(args),
     )
     summary = run_pretrain(config)
     print(f"Wrote {config.output_dir}")
@@ -118,6 +125,7 @@ def run_finetune_cli(args: argparse.Namespace) -> None:
         episode_length=args.episode_length,
         action_repeat=args.action_repeat,
         stop_on_collapse=args.stop_on_collapse,
+        shift=shift_from_args(args),
     )
     summary = run_finetune(config)
     print(f"Wrote {config.output_dir}")
