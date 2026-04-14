@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 
-from atlas.config import estimate_run_hours
+from atlas.config import ShiftSpec, estimate_run_hours
 
 
 def positive_int(raw_value: str) -> int:
@@ -46,3 +46,16 @@ def pilot_hours_from_report(
             f"to the requested {total_fine_tune_steps}-step {run_label}"
         ),
     }
+
+
+def shift_from_pilot_report(path: Path) -> ShiftSpec:
+    report = json.loads(path.read_text(encoding="utf-8"))
+    raw_shift = report.get("shift")
+    if not isinstance(raw_shift, dict):
+        raise ValueError("pilot report is missing shift metadata")
+    return ShiftSpec(
+        train_friction_range=tuple(raw_shift["train_friction_range"]),
+        train_payload_range=tuple(raw_shift["train_payload_range"]),
+        fine_tune_friction=float(raw_shift["fine_tune_friction"]),
+        fine_tune_payload=float(raw_shift["fine_tune_payload"]),
+    )

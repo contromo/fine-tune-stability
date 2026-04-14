@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from atlas.config import ShiftSpec
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,6 +35,12 @@ class RunPretrainSensitivityTest(unittest.TestCase):
                 fine_tune_steps=2_000_000,
                 pretrain_seed_values=(0, 1, 2),
                 finetune_seed_values=(0, 1),
+                shift_spec=ShiftSpec(
+                    train_friction_range=(0.8, 1.2),
+                    train_payload_range=(0.8, 1.2),
+                    fine_tune_friction=0.3,
+                    fine_tune_payload=1.5,
+                ),
             )
             with mock.patch.object(module, "parse_args", return_value=args):
                 module.main()
@@ -46,6 +54,43 @@ class RunPretrainSensitivityTest(unittest.TestCase):
             self.assertEqual(manifest["fine_tune_seed_values"], [0, 1])
             self.assertEqual(manifest["runs"][0]["pretrain_seed"], 0)
             self.assertEqual(manifest["runs"][0]["finetune_args"]["seed"], 0)
+
+    def test_main_uses_shift_from_pilot_report(self) -> None:
+        module = _load_script(ROOT / "scripts" / "run_pretrain_sensitivity.py")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            output_path = tmpdir_path / "pretrain_sensitivity_manifest.json"
+            report_path = tmpdir_path / "pilot_report.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "budget": {"hours_per_100m_extreme": 8.25},
+                        "shift": {
+                            "train_friction_range": [0.8, 1.2],
+                            "train_payload_range": [0.8, 1.2],
+                            "fine_tune_friction": 0.2,
+                            "fine_tune_payload": 1.8,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                output=output_path,
+                pilot_hours=None,
+                from_pilot_report=report_path,
+                fine_tune_steps=2_000_000,
+                pretrain_seed_values=(1, 2),
+                finetune_seed_values=(0, 1),
+                shift_spec=None,
+            )
+            with mock.patch.object(module, "parse_args", return_value=args):
+                module.main()
+
+            manifest = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["shift"]["fine_tune_friction"], 0.2)
+            self.assertEqual(manifest["runs"][0]["shift"]["fine_tune_payload"], 1.8)
 
 
 if __name__ == "__main__":

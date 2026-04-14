@@ -22,7 +22,7 @@ from atlas.config import (
     default_pretrain_sensitivity_pretrain_seeds,
     generate_pretrain_sensitivity_sweep,
 )
-from atlas.manifest_utils import parse_seed_csv, pilot_hours_from_report, positive_int
+from atlas.manifest_utils import parse_seed_csv, pilot_hours_from_report, positive_int, shift_from_pilot_report
 
 
 def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:
@@ -42,6 +42,8 @@ def _resolve_budget_source(args: argparse.Namespace, total_fine_tune_steps: int)
 
 
 def parse_args() -> argparse.Namespace:
+    from atlas_training.config import add_shift_cli_args, shift_from_args
+
     defaults = default_hyperparameters()
     default_pretrain_seeds = ",".join(str(seed) for seed in default_pretrain_sensitivity_pretrain_seeds())
     default_finetune_seeds = ",".join(str(seed) for seed in range(defaults.seeds_per_cell))
@@ -59,10 +61,18 @@ def parse_args() -> argparse.Namespace:
     budget_group = parser.add_mutually_exclusive_group()
     budget_group.add_argument("--pilot-hours", type=float, default=None)
     budget_group.add_argument("--from-pilot-report", type=Path, default=None)
+    add_shift_cli_args(parser)
     args = parser.parse_args()
     args.pretrain_seed_values = args.pretrain_seeds
     args.finetune_seed_values = args.fine_tune_seeds
+    args.shift_spec = shift_from_args(args)
     return args
+
+
+def _resolve_shift(args: argparse.Namespace):
+    if args.from_pilot_report is not None:
+        return shift_from_pilot_report(args.from_pilot_report)
+    return args.shift_spec
 
 
 def main() -> None:
@@ -71,10 +81,12 @@ def main() -> None:
 
     hyperparameters = replace(default_hyperparameters(), total_fine_tune_steps=args.fine_tune_steps)
     pilot_hours, budget_source = _resolve_budget_source(args, hyperparameters.total_fine_tune_steps)
+    shift = _resolve_shift(args)
     sweep = generate_pretrain_sensitivity_sweep(
         hyperparameters=hyperparameters,
         pretrain_seed_values=args.pretrain_seed_values,
         finetune_seed_values=args.finetune_seed_values,
+        shift=shift,
     )
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -85,6 +97,12 @@ def main() -> None:
             "critic_width": REPRESENTATIVE_PRETRAIN_SENSITIVITY_CRITIC_WIDTH,
         },
         "hyperparameters": hyperparameters.to_dict(),
+        "shift": {
+            "train_friction_range": list(shift.train_friction_range),
+            "train_payload_range": list(shift.train_payload_range),
+            "fine_tune_friction": shift.fine_tune_friction,
+            "fine_tune_payload": shift.fine_tune_payload,
+        },
         "hours_per_100m_normalization_steps": HOURS_PER_100M_NORMALIZATION_STEPS,
         "pretrain_seed_values": list(args.pretrain_seed_values),
         "fine_tune_seed_values": list(args.finetune_seed_values),

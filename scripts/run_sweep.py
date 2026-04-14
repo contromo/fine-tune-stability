@@ -19,10 +19,12 @@ from atlas.config import (
     default_hyperparameters,
     generate_sweep,
 )
-from atlas.manifest_utils import pilot_hours_from_report, positive_int
+from atlas.manifest_utils import pilot_hours_from_report, positive_int, shift_from_pilot_report
 
 
 def parse_args() -> argparse.Namespace:
+    from atlas_training.config import add_shift_cli_args, shift_from_args
+
     parser = argparse.ArgumentParser(description="Generate the atlas sweep manifest.")
     parser.add_argument("--output", type=Path, default=Path("results/sweep_manifest.json"))
     parser.add_argument(
@@ -34,7 +36,10 @@ def parse_args() -> argparse.Namespace:
     budget_group = parser.add_mutually_exclusive_group()
     budget_group.add_argument("--pilot-hours", type=float, default=None)
     budget_group.add_argument("--from-pilot-report", type=Path, default=None)
-    return parser.parse_args()
+    add_shift_cli_args(parser)
+    args = parser.parse_args()
+    args.shift_spec = shift_from_args(args)
+    return args
 
 
 def _pilot_hours_from_report(path: Path, total_fine_tune_steps: int) -> tuple[float, dict[str, object]]:
@@ -53,16 +58,29 @@ def _resolve_budget_source(args: argparse.Namespace, total_fine_tune_steps: int)
     }
 
 
+def _resolve_shift(args: argparse.Namespace):
+    if args.from_pilot_report is not None:
+        return shift_from_pilot_report(args.from_pilot_report)
+    return args.shift_spec
+
+
 def main() -> None:
     args = parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     hyperparameters = replace(default_hyperparameters(), total_fine_tune_steps=args.fine_tune_steps)
     pilot_hours, budget_source = _resolve_budget_source(args, hyperparameters.total_fine_tune_steps)
-    sweep = generate_sweep(hyperparameters=hyperparameters)
+    shift = _resolve_shift(args)
+    sweep = generate_sweep(hyperparameters=hyperparameters, shift=shift)
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "hyperparameters": hyperparameters.to_dict(),
+        "shift": {
+            "train_friction_range": list(shift.train_friction_range),
+            "train_payload_range": list(shift.train_payload_range),
+            "fine_tune_friction": shift.fine_tune_friction,
+            "fine_tune_payload": shift.fine_tune_payload,
+        },
         "hours_per_100m_normalization_steps": HOURS_PER_100M_NORMALIZATION_STEPS,
         "run_count": len(sweep),
         "budget_source": budget_source,
