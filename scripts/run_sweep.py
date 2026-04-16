@@ -19,11 +19,22 @@ from atlas.config import (
     default_hyperparameters,
     generate_sweep,
 )
-from atlas.manifest_utils import pilot_hours_from_report, positive_int, shift_from_pilot_report
+from atlas.manifest_utils import (
+    parse_positive_int_csv,
+    parse_seed_csv,
+    pilot_hours_from_report,
+    positive_int,
+    shift_from_pilot_report,
+)
 
 
 def parse_args() -> argparse.Namespace:
     from atlas_training.config import add_shift_cli_args, shift_from_args
+
+    defaults = default_hyperparameters()
+    default_n_steps = ",".join(str(value) for value in defaults.n_steps)
+    default_critic_widths = ",".join(str(value) for value in defaults.critic_widths)
+    default_seeds = ",".join(str(seed) for seed in range(defaults.seeds_per_cell))
 
     parser = argparse.ArgumentParser(description="Generate the atlas sweep manifest.")
     parser.add_argument("--output", type=Path, default=Path("results/sweep_manifest.json"))
@@ -33,12 +44,33 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SWEEP_FINE_TUNE_STEPS,
         help="per-run fine-tune horizon for the main sweep manifest; defaults to the 2M-step main study plan",
     )
+    parser.add_argument(
+        "--n-steps",
+        type=parse_positive_int_csv,
+        default=parse_positive_int_csv(default_n_steps),
+        help="comma-separated backup horizons to include in the sweep manifest",
+    )
+    parser.add_argument(
+        "--critic-widths",
+        type=parse_positive_int_csv,
+        default=parse_positive_int_csv(default_critic_widths),
+        help="comma-separated critic widths to include in the sweep manifest",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=parse_seed_csv,
+        default=parse_seed_csv(default_seeds),
+        help="comma-separated fine-tune seeds to include in the sweep manifest",
+    )
     budget_group = parser.add_mutually_exclusive_group()
     budget_group.add_argument("--pilot-hours", type=float, default=None)
     budget_group.add_argument("--from-pilot-report", type=Path, default=None)
     add_shift_cli_args(parser)
     args = parser.parse_args()
     args.shift_spec = shift_from_args(args)
+    args.n_step_values = tuple(args.n_steps)
+    args.critic_width_values = tuple(args.critic_widths)
+    args.seed_values = tuple(args.seeds)
     return args
 
 
@@ -68,13 +100,24 @@ def main() -> None:
     args = parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    hyperparameters = replace(default_hyperparameters(), total_fine_tune_steps=args.fine_tune_steps)
+    hyperparameters = replace(
+        default_hyperparameters(),
+        total_fine_tune_steps=args.fine_tune_steps,
+        n_steps=args.n_step_values,
+        critic_widths=args.critic_width_values,
+        seeds_per_cell=len(args.seed_values),
+    )
     pilot_hours, budget_source = _resolve_budget_source(args, hyperparameters.total_fine_tune_steps)
     shift = _resolve_shift(args)
-    sweep = generate_sweep(hyperparameters=hyperparameters, shift=shift)
+    sweep = generate_sweep(hyperparameters=hyperparameters, seed_values=args.seed_values, shift=shift)
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "hyperparameters": hyperparameters.to_dict(),
+        "selected_factors": {
+            "n_steps": list(args.n_step_values),
+            "critic_widths": list(args.critic_width_values),
+            "fine_tune_seeds": list(args.seed_values),
+        },
         "shift": {
             "train_friction_range": list(shift.train_friction_range),
             "train_payload_range": list(shift.train_payload_range),

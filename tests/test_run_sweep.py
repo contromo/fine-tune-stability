@@ -82,6 +82,9 @@ class RunSweepTest(unittest.TestCase):
                 pilot_hours=None,
                 from_pilot_report=report_path,
                 fine_tune_steps=2_000_000,
+                n_step_values=(1, 3, 10),
+                critic_width_values=(256, 1024),
+                seed_values=(0, 1, 2, 3, 4, 5, 6, 7),
                 shift_spec=None,
             )
             with mock.patch.object(module, "parse_args", return_value=args):
@@ -104,6 +107,9 @@ class RunSweepTest(unittest.TestCase):
                 pilot_hours=1.5,
                 from_pilot_report=None,
                 fine_tune_steps=5_000_000,
+                n_step_values=(1, 3, 10),
+                critic_width_values=(256, 1024),
+                seed_values=(0, 1, 2, 3, 4, 5, 6, 7),
                 shift_spec=ShiftSpec(
                     train_friction_range=(0.8, 1.2),
                     train_payload_range=(0.8, 1.2),
@@ -117,6 +123,34 @@ class RunSweepTest(unittest.TestCase):
             manifest = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["hyperparameters"]["total_fine_tune_steps"], 5_000_000)
             self.assertEqual(manifest["runs"][0]["train_steps"], 5_000_000)
+
+    def test_main_can_emit_reduced_horizon_only_sweep(self) -> None:
+        module = _load_script(ROOT / "scripts" / "run_sweep.py")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "sweep_manifest.json"
+            args = SimpleNamespace(
+                output=output_path,
+                pilot_hours=1.5,
+                from_pilot_report=None,
+                fine_tune_steps=1_000_000,
+                n_step_values=(1, 3, 10),
+                critic_width_values=(256,),
+                seed_values=(0, 1),
+                shift_spec=ShiftSpec(
+                    train_friction_range=(0.8, 1.2),
+                    train_payload_range=(0.8, 1.2),
+                    fine_tune_friction=0.1,
+                    fine_tune_payload=2.2,
+                ),
+            )
+            with mock.patch.object(module, "parse_args", return_value=args):
+                module.main()
+
+            manifest = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["run_count"], 6)
+            self.assertEqual(manifest["selected_factors"]["critic_widths"], [256])
+            self.assertEqual(manifest["selected_factors"]["fine_tune_seeds"], [0, 1])
+            self.assertEqual({run["critic_width"] for run in manifest["runs"]}, {256})
 
 
 if __name__ == "__main__":

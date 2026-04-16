@@ -22,6 +22,15 @@ def parse_seed_csv(raw_value: str) -> tuple[int, ...]:
     return seeds
 
 
+def parse_positive_int_csv(raw_value: str) -> tuple[int, ...]:
+    values = tuple(int(part.strip()) for part in raw_value.split(",") if part.strip())
+    if not values:
+        raise argparse.ArgumentTypeError("value list must not be empty")
+    if any(value <= 0 for value in values):
+        raise argparse.ArgumentTypeError("all values must be positive")
+    return values
+
+
 def pilot_hours_from_report(
     path: Path,
     total_fine_tune_steps: int,
