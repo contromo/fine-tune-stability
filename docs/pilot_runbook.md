@@ -101,6 +101,8 @@ Pilot artifacts live under `results/runs/<pilot_id>/`:
 - `extreme_probe/summary.json`
 
 `pilot_report.json` embeds a stable `environment` block plus `preflight_path`. `pilot.log` appends a timestamped header on each attempt so interrupted reruns are visible in one file.
+
+Per-seed fine-tune `summary.json` now also carries `probe_size` (the probe batch size resolved from the replay queue), and each post-warmup row in `eval_log.jsonl` carries optional `actor_kl_drift` and `q_magnitude_drift` fields alongside the canonical TD-variance `score`.
 A durable decision stub is also written to `docs/decisions/YYYY-MM-DD-<run_id>.md` by default. Override the location with `--decision-dir` if the pilot is being orchestrated outside the repo checkout.
 If the decision file already exists and has been edited, rerunning with the same date and `run_id` fails; use a different `run_id` or clean up the old note first.
 

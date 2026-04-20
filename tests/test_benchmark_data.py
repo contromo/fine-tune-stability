@@ -83,5 +83,24 @@ class BenchmarkDataTest(unittest.TestCase):
         self.assertIn("pilot_gate_1m_v4", pilot_ids)
 
 
+    def test_sample_eval_log_drives_alt_signal_analysis_end_to_end(self) -> None:
+        from atlas_training.diagnostics import load_eval_log, summarize_eval_groups
+
+        grouped = load_eval_log(DATA_DIR / "sample_eval_log.jsonl")
+        summary = summarize_eval_groups(
+            grouped,
+            prediction_horizon=2,
+            score_field="actor_kl_drift",
+            trigger_threshold=0.5,
+        )
+        self.assertEqual(summary["score_field"], "actor_kl_drift")
+        self.assertEqual(summary["trigger_threshold"], 0.5)
+        lead_times = [run["lead_time_evals"] for run in summary["runs"]]
+        self.assertTrue(
+            any(lt is not None and lt > 0 for lt in lead_times),
+            f"expected at least one run with a non-null lead time, got {lead_times}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

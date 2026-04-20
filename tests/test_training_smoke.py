@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import math
 import os
 import subprocess
 import sys
@@ -148,6 +150,27 @@ class TrainingSmokeTest(unittest.TestCase):
             check=True,
             cwd=ROOT,
         )
+
+        summary = json.loads((finetune_dir / "summary.json").read_text(encoding="utf-8"))
+        probe_size = summary.get("probe_size")
+        self.assertIsInstance(probe_size, int)
+        self.assertGreater(probe_size, 0)
+
+        rows = [
+            json.loads(line)
+            for line in (finetune_dir / "eval_log.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertGreater(len(rows), 0, "fine-tune produced no eval rows")
+        rows_with_drift = [
+            row for row in rows if "actor_kl_drift" in row and "q_magnitude_drift" in row
+        ]
+        self.assertGreater(
+            len(rows_with_drift), 0, "no eval rows carry actor_kl_drift / q_magnitude_drift"
+        )
+        for row in rows_with_drift:
+            self.assertTrue(math.isfinite(float(row["actor_kl_drift"])))
+            self.assertTrue(math.isfinite(float(row["q_magnitude_drift"])))
 
 
 if __name__ == "__main__":

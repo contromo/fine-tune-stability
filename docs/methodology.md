@@ -46,3 +46,23 @@ The recent-buffer implementation lives in `atlas.recent_buffer` and is intended 
 - diagnostic TD errors are computed from recent-buffer samples only
 - the first two eligible eval checkpoints are warmup-only and do not emit `eval_log.jsonl` rows
 - emitted eval rows begin at `eval_index = 0` on the first post-warmup checkpoint
+
+## Instrumented Warning Signals
+
+Every post-warmup eval row carries up to three warning signals:
+
+| Field | Formula | Source |
+| --- | --- | --- |
+| `score` | `log(var_recent_TD + eps) - log(var_warmup_TD + eps)` | canonical TD-variance (`atlas/diagnostics.py::summarize_td_errors`) |
+| `actor_kl_drift` | diagonal-Gaussian KL from pretrained to current policy on a probe batch, sum over action dims, mean over batch | `atlas_training/signals.py::actor_kl_drift` |
+| `q_magnitude_drift` | `log(mean(min(\|Q1\|,\|Q2\|))_current + eps) - log(mean(min(\|Q1_pre\|,\|Q2_pre\|)) + eps)` on a probe batch | `atlas_training/signals.py::q_magnitude_drift` |
+
+Only `score` has a calibrated trigger threshold (`log(3)` for two consecutive evals).
+`actor_kl_drift` and `q_magnitude_drift` are emitted unthresholded; downstream analysis
+computes ROC-AUC against collapse-horizon labels directly, and lead-time metrics are
+only produced when a user-provided trigger threshold is supplied via
+`scripts/run_diagnostic.py --trigger-threshold`. KL is computed on the underlying
+pre-tanh Normal with `scale = softplus(scale_logit) + min_std` matching
+`brax.training.distribution.NormalTanhDistribution`. The `min(|Q1|, |Q2|)` rule is a
+conservative twin-critic magnitude heuristic consistent with SAC's twin-critic design
+philosophy; it is a benchmark-level pinning, not a theoretical derivation.
