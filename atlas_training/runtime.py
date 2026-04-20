@@ -52,6 +52,7 @@ from atlas_training.diagnostics import (
     mark_eval_row_emitted,
     record_warmup_variance,
 )
+from atlas_training.signals import ProbeContext, actor_kl_drift, build_probe_context, q_magnitude_drift
 from atlas_training.util import hours_per_100m, summarize_throughput_rates, write_json
 
 FLOOR_GEOM_ID = 0
@@ -227,6 +228,8 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         flax_serialization.from_state_dict(replay_state, checkpoint_payload["replay_state"])
     )
 
+    probe_context, replay_state = build_probe_context(runtime, training_state, replay_buffer, replay_state)
+
     env_state = _warmup_jit(runtime, training_state, env_state, replay_buffer, replay_state, train_env)
 
     baseline_returns = _evaluate_policy(runtime, baseline_evaluator, training_state)["episode_returns"]
@@ -266,6 +269,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         enable_diagnostics=True,
         baseline=baseline,
         eval_log_path=config.eval_log_path(),
+        probe_context=probe_context,
     )
 
     summary = {
@@ -283,6 +287,7 @@ def run_finetune(config: VerticalSliceConfig) -> dict[str, Any]:
         ],
         "warning_triggered": warning_triggered,
         "training_metrics": final_metrics,
+        "probe_size": probe_context.probe_size,
     }
     summary["wallclock_seconds"] = round(time.perf_counter() - start_time, 6)
     summary["steps_per_second"] = _steps_per_second(env_steps, summary["wallclock_seconds"])
@@ -809,6 +814,7 @@ def _run_training_loop(
     enable_diagnostics: bool,
     baseline: FrozenBaseline | None = None,
     eval_log_path: Path | None = None,
+    probe_context: ProbeContext | None = None,
 ):
     key = jax.random.PRNGKey(config.seed + 17)
     aggregator = MultiStreamNStepAggregator(n_step=config.n_step, gamma=config.gamma)
@@ -891,6 +897,21 @@ def _run_training_loop(
             return_mean = float(eval_metrics["return_mean"])
             collapsed = return_mean < baseline.threshold
             trigger.update(snapshot.score)
+            actor_kl_value: float | None = None
+            q_mag_value: float | None = None
+            if probe_context is not None:
+                actor_kl_value = actor_kl_drift(
+                    runtime,
+                    probe_context,
+                    training_state.policy_params,
+                    training_state.normalizer_params,
+                )
+                q_mag_value = q_magnitude_drift(
+                    runtime,
+                    probe_context,
+                    training_state.q_params,
+                    training_state.normalizer_params,
+                )
             row = make_eval_log_row(
                 run_id=config.run_id,
                 eval_index=diagnostic_state.emitted_rows,
@@ -901,6 +922,8 @@ def _run_training_loop(
                 q95_abs_td=snapshot.q95_abs_td,
                 threshold=baseline.threshold,
                 env_steps=env_steps,
+                actor_kl_drift=actor_kl_value,
+                q_magnitude_drift=q_mag_value,
             )
             diagnostic_state = mark_eval_row_emitted(diagnostic_state)
             if eval_log_handle is not None:

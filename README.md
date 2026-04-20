@@ -1,240 +1,199 @@
-# Fine-Tuning Stability Atlas
+# fine-tune-stability
 
-`fine-tune-stability` is a small research codebase for studying collapse during sample-efficient fine-tuning of robotic RL policies. The repository is split into:
+A reproducible benchmark for **fine-tuning-under-shift** of robotic RL policies. One
+locomotion environment (`Go1JoystickFlatTerrain` via MuJoCo Playground), one severe
+dynamics shift (friction × payload), and **three warning signals instrumented per eval
+row** so alternative collapse-detection heuristics can be compared on the same runs.
 
-- `atlas/`: pure, dependency-light research utilities
-- `atlas_training/`: the Brax + MuJoCo Playground vertical slice for Go1 SAC pretrain/fine-tune runs
+The accompanying paper (post-mortem) reports a negative result on the canonical
+TD-variance warning signal under a severe shift. The repository is designed to let
+others plug in their own signals against the same logged diagnostics.
 
-The current implementation is designed to answer one concrete question well: can we pretrain a Go1 locomotion policy, shift the domain at fine-tune time, log recent-buffer TD diagnostics, and recover the artifacts needed for a stability-atlas analysis.
+> **Status (2026-04):** 1 environment × 1 shift × 3 signals, small seed counts, `n=1`-only
+> warning pilots. The primary warning result is negative; see [benchmark/README.md](benchmark/README.md)
+> for confounds and limits. The value on offer is the infrastructure, not a new SOTA.
 
-## What Is Here
+## Signal catalog
 
-- naive off-policy n-step aggregation with timeout-aware flushing
-- recent-transition diagnostics based on TD-error variance and q95
-- collapse-threshold utilities and warning-score logic
-- a one-cell Brax/MuJoCo Playground training slice for `Go1JoystickFlatTerrain`
-- reproducible runner scripts for pretrain, fine-tune, pilot calibration, sweep manifest generation, and diagnostic summarization
+Every post-warmup eval row in `eval_log.jsonl` carries:
 
-## Repo Layout
+| Field | Formula | Where |
+| --- | --- | --- |
+| `score` | `log(var_recent_TD) − log(var_warmup_TD)` | canonical TD-variance warning ([atlas/diagnostics.py](atlas/diagnostics.py)) |
+| `actor_kl_drift` | diagonal-Gaussian KL from pretrained to current policy on a probe batch | [atlas_training/signals.py](atlas_training/signals.py) |
+| `q_magnitude_drift` | `log(mean(min(\|Q1\|,\|Q2\|))_current) − log(…)_pretrained` on a probe batch | [atlas_training/signals.py](atlas_training/signals.py) |
 
-- `atlas/`
-  Pure helpers for transitions, n-step aggregation, time-limit handling, recent buffers, and diagnostics.
-- `atlas_training/`
-  Runtime code for environment construction, SAC wiring, checkpoint save/load, and fine-tune diagnostics.
-- `scripts/`
-  CLI entrypoints and the one-command smoke flow.
-- `tests/`
-  Pure-Python tests plus dependency-gated runtime coverage.
-- `docs/`
-  Methodology notes and Brax integration details.
+Only `score` has a calibrated trigger threshold (`log(3)`). Alternative signals produce
+threshold-free ROC-AUC against collapse-horizon labels by default; pass
+`--trigger-threshold` to `scripts/run_diagnostic.py` to additionally compute
+`first_warning_eval` / `lead_time_evals` for them.
 
-## Install
+**Adding a new signal:** (1) add the function to [atlas_training/signals.py](atlas_training/signals.py),
+(2) add the optional field to `EvalLogRow` in [atlas_training/diagnostics.py](atlas_training/diagnostics.py),
+(3) wire it into `_run_training_loop` in [atlas_training/runtime.py](atlas_training/runtime.py)
+so the per-eval value is written to `eval_log.jsonl`, (4) analyze via
+`python scripts/run_diagnostic.py --score-field your_signal_name`.
 
-Base install:
-
-```bash
-./scripts/setup.sh
-```
-
-Training install:
+## Quickstart (CPU smoke)
 
 ```bash
 ./scripts/setup.sh --train
+./scripts/run_all.sh
 ```
 
-Alternative venv location:
+The smoke flow uses tiny training settings (wiring check, not an experiment). End-to-end
+CPU runtime on macOS is under 15 minutes.
+
+Run the test suite:
 
 ```bash
-VENV_PATH=/abs/path/to/.venv ./scripts/setup.sh --train
+python3 -m unittest discover tests
+```
+
+## Benchmark data
+
+The frozen paper data lives in [benchmark/data/](benchmark/data/) with a SHA-256
+manifest. Every number in the paper is traceable to one of these files.
+
+- [`benchmark/README.md`](benchmark/README.md) — data card, schemas, confounds.
+- `benchmark/data/manifest.sha256` — verify via `cd benchmark/data && shasum -a 256 -c manifest.sha256`.
+
+Schema stability is enforced by `tests/test_benchmark_data.py`.
+
+## Full-scale reproducibility (GPU recipe)
+
+The headline numbers in the paper were produced on a single A100 via Runpod. This is a
+documented recipe, not a one-command reproduction.
+
+```bash
+# 1. Install the training stack on a GPU host (replace jax install with CUDA wheel).
+./scripts/setup.sh --train
+pip install --upgrade "jax[cuda12]==0.9.2"
+
+# 2. Pretrain a checkpoint (~2 GPU-hours at 2M steps).
+python3 scripts/run_pretrain.py --output-dir results/runs/pretrain_go1
+
+# 3. Generate the fine-tune sweep manifest.
+python3 scripts/run_sweep.py --output results/sweep_manifest.json
+
+# 4. Execute fine-tune seeds from the manifest (one invocation per seed, or batched via
+#    your scheduler of choice). Each seed takes ~3 GPU-hours at 2M fine-tune steps.
+python3 scripts/run_finetune.py \
+  --checkpoint results/runs/pretrain_go1/checkpoint \
+  --output-dir results/runs/finetune_go1_seed0
+
+# 5. Summarize the canonical TD-variance signal.
+python3 scripts/run_diagnostic.py \
+  --eval-log results/runs/finetune_go1_seed0/eval_log.jsonl \
+  --output results/diagnostic_summary.json
+
+# 6. Analyze an alternative signal (AUC for any field; lead time requires a threshold).
+python3 scripts/run_diagnostic.py \
+  --eval-log results/runs/finetune_go1_seed0/eval_log.jsonl \
+  --score-field actor_kl_drift \
+  --trigger-threshold 0.5 \
+  --output results/diag_actor_kl.json
+```
+
+Budgeted cost at $1.50/GPU-hr for the v4 pilot (3 seeds × pretrain + fine-tune): ~$20.
+
+## Install details
+
+```bash
+./scripts/setup.sh           # base install
+./scripts/setup.sh --train   # training stack
+VENV_PATH=/abs/path/.venv ./scripts/setup.sh --train  # alternative venv
 ```
 
 Notes:
 
-- `.[train]` pins the known-good vertical-slice stack: `brax 0.14.2`, `jax 0.9.2`, `mujoco 3.6.0`, `mujoco-mjx 3.6.0`, and `playground 0.2.0`.
-- `.[train]` intentionally resolves the default `jax` package so CPU smoke runs work out of the box.
-- GPU users should replace or upgrade that JAX install with the platform-specific wheel set for their accelerator.
-- `playground` is the distribution name that provides the `mujoco_playground` import path used by this repo.
-- Brax is pinned to `0.14.2` because `atlas_training` depends on 0.14.x evaluator and replay internals, and the current vertical slice is validated against that exact release.
-- `scripts/setup.sh` respects `VENV_PATH`, which is useful on hosted GPU boxes where the repo lives on a network filesystem.
+- `.[train]` pins `brax 0.14.2`, `jax 0.9.2`, `mujoco 3.6.0`, `mujoco-mjx 3.6.0`,
+  `playground 0.2.0`.
+- Default install resolves the CPU JAX wheel so smoke runs work out of the box.
+- GPU users replace the JAX install with the CUDA wheel for their accelerator.
+- Brax is pinned to `0.14.2` because `atlas_training` depends on 0.14.x evaluator and
+  replay internals.
 
-### Runpod / Network Filesystems
+### Runpod / network filesystems
 
-On Runpod, `/workspace` is often a network-mounted volume. Creating a Python venv there can be very slow because wheel extraction writes thousands of files over the network.
-
-Prefer:
+On Runpod, `/workspace` is often a slow network mount. Keep the venv and UV cache on
+local container disk:
 
 ```bash
 mkdir -p /root/.venvs /root/.cache/uv
-export UV_CACHE_DIR=/root/.cache/uv
-export UV_LINK_MODE=copy
+export UV_CACHE_DIR=/root/.cache/uv UV_LINK_MODE=copy
 VENV_PATH=/root/.venvs/fine-tune-stability ./scripts/setup.sh --train
 ln -sfn /root/.venvs/fine-tune-stability .venv
 ```
 
-Keep the repo and `results/` on `/workspace`, but keep the venv and UV cache on local container disk.
+## Repo layout
 
-## Quickstart
+- `atlas/` — pure, dependency-light research utilities (n-step aggregation, recent
+  buffers, TD diagnostics, KL helper).
+- `atlas_training/` — Brax + MuJoCo Playground vertical slice (SAC pretrain/fine-tune,
+  probe-context signals, eval-log emission).
+- `benchmark/data/` — frozen paper snapshot with SHA manifest and data card.
+- `scripts/` — CLI entrypoints (`run_pretrain`, `run_finetune`, `run_pilot`,
+  `run_diagnostic`, `run_sweep`) and the smoke flow `run_all.sh`.
+- `tests/` — pure-Python tests plus dependency-gated runtime coverage.
+- `docs/` — methodology, Brax integration notes, pilot runbook.
 
-Run the pure-Python test suite:
+## Artifacts produced by training
 
-```bash
-python3 -m unittest discover -s tests -v
-```
+- Pretrain: `config.json`, `summary.json`, `checkpoint/checkpoint.msgpack`.
+- Fine-tune: `config.json`, `pretrain_baseline.json`, `eval_log.jsonl`, `summary.json`
+  (includes `probe_size` when the alt-signal probe is active).
+- Pilot: `preflight.json`, `pilot.log`, `pilot_report.json`, per-seed outputs,
+  `extreme_probe/summary.json`, decision note under `docs/decisions/`.
 
-Generate the main-study sweep manifest:
-
-```bash
-python3 scripts/run_sweep.py --output results/sweep_manifest.json
-```
-
-This defaults to `2,000,000` fine-tune steps per run. Longer horizons require an explicit `--fine-tune-steps` override.
-
-Run a small pretrain checkpoint:
-
-```bash
-python3 scripts/run_pretrain.py --output-dir results/runs/pretrain_go1
-```
-
-Fine-tune from that checkpoint under the shifted domain:
-
-```bash
-python3 scripts/run_finetune.py \
-  --checkpoint results/runs/pretrain_go1/checkpoint \
-  --output-dir results/runs/finetune_go1
-```
-
-Run the pilot calibration gate with a shared pretrain, three fine-tune seeds, and one extremal throughput probe:
-
-```bash
-python3 scripts/run_pilot.py --profile production
-```
-
-Run standalone host preflight before launching the full pilot:
-
-```bash
-python3 scripts/preflight_pilot.py --profile production
-```
-
-Run a reduced-budget GPU-host smoke pilot on the production code path:
-
-```bash
-python3 scripts/run_pilot.py \
-  --profile production \
-  --run-id pilot_gpu_smoke \
-  --output-dir results/runs/pilot_gpu_smoke \
-  --seeds 0,1 \
-  --pretrain-steps 50000 \
-  --eval-interval 10000 \
-  --fine-tune-steps 50016 \
-  --baseline-eval-episodes 10 \
-  --throughput-probe-updates 50
-```
-
-Summarize diagnostic logs:
-
-```bash
-python3 scripts/run_diagnostic.py \
-  --eval-log results/runs/finetune_go1/eval_log.jsonl \
-  --output results/diagnostic_summary.json
-```
-
-Run the end-to-end smoke flow:
-
-```bash
-./scripts/run_all.sh
-```
-
-The smoke flow uses deliberately tiny training settings for runtime reasons; it is a wiring check, not a meaningful experiment.
-
-## Artifacts
-
-Pretrain writes:
-
-- `results/runs/<run_id>/config.json`
-- `results/runs/<run_id>/summary.json`
-- `results/runs/<run_id>/checkpoint/checkpoint.msgpack`
-
-Fine-tune writes:
-
-- `results/runs/<run_id>/config.json`
-- `results/runs/<run_id>/pretrain_baseline.json`
-- `results/runs/<run_id>/eval_log.jsonl`
-- `results/runs/<run_id>/summary.json`
-
-Pilot writes:
-
-- `results/runs/<pilot_id>/preflight.json`
-- `results/runs/<pilot_id>/pilot.log`
-- `results/runs/<pilot_id>/pilot_report.json`
-- `results/runs/<pilot_id>/shared_pretrain/...`
-- `results/runs/<pilot_id>/seed_<seed>/...`
-- `results/runs/<pilot_id>/extreme_probe/summary.json`
-- `docs/decisions/YYYY-MM-DD-<run_id>.md`
-
-`summary.json` includes `warning_triggered` as a convenience summary field. The canonical per-eval warning signal remains `score` in `eval_log.jsonl`.
-`pilot_report.json` includes an explicit `proceed`, `adjust`, or `fail` gate decision plus the shared-pretrain caveat, conservative sweep budget bound, embedded environment metadata, and `preflight_path`.
-`pilot_report.json` also records threshold-calibration provenance (`collapse_c`, `collapse_rho`) and the decision-note path used for the durable operator record.
-
-## Important Runtime Conventions
+## Runtime conventions
 
 One-step transitions use bootstrap-multiplier semantics:
+- continuing step → `discount = gamma`
+- true terminal → `discount = 0.0`
+- time-limit truncation → `discount = gamma`
 
-- continuing step: `discount = gamma`
-- true terminal: `discount = 0.0`
-- time-limit truncation: `discount = gamma`
-
-The vertical slice also relies on these diagnostic conventions:
-
-- TD diagnostics are computed from the recent-transition buffer only
-- the first two eligible eval checkpoints are warmup-only and do not emit rows
-- `eval_index` starts at `0` on the first emitted post-warmup row
-- eval scheduling fires on the first step at-or-past each target interval, so non-divisible `eval_interval` values still work
+Diagnostic conventions:
+- TD diagnostics are computed from the recent-transition buffer only.
+- The first two eligible eval checkpoints are warmup-only (no rows emitted).
+- `eval_index` starts at `0` on the first post-warmup row.
+- The alt-signal probe batch is sampled once at fine-tune start via
+  `replay_buffer.sample(...)`, advancing the replay RNG by one sample before the main
+  loop begins. This is intentional and logged as `probe_size` in the finetune summary.
 
 ## Testing
 
-Always run:
-
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover tests                       # pure-Python, always runs
+./.venv/bin/python -m unittest tests.test_training_runtime  # requires training stack
+FINE_TUNE_STABILITY_RUN_TRAINING_SMOKE=1 \                  # gated heavy smoke
+  python3 -m unittest tests.test_training_smoke
 ```
 
-GitHub Actions runs this pure-Python suite on pull requests and pushes to `main` / `vertical_slice`.
+## Further notes
 
-Dependency-gated runtime tests can be run with the training environment:
+- Methodology: [`docs/methodology.md`](docs/methodology.md).
+- Brax integration assumptions: [`docs/integration.md`](docs/integration.md).
+- Pilot operating instructions: [`docs/pilot_runbook.md`](docs/pilot_runbook.md).
+- Scheduler handoff after a successful pilot:
+  ```bash
+  python3 scripts/run_sweep.py \
+    --from-pilot-report results/runs/pilot_gate/pilot_report.json \
+    --output results/sweep_manifest.json
+  ```
+- Do not generate any sweep or sensitivity manifest from a pilot report that ended in
+  `adjust` or `fail`.
 
-```bash
-./.venv/bin/python -m unittest tests.test_training_runtime -v
+## Citation
+
+```
+@software{fine_tune_stability_2026,
+  author = {Manav Mehra},
+  title = {fine-tune-stability: A Benchmark for Warning-Signal Evaluation under
+           Dynamics Shift},
+  year = {2026},
+  url = {https://github.com/manavm0/fine-tune-stability}
+}
 ```
 
-The heavy smoke test in `tests/test_training_smoke.py` is disabled by default and only runs when:
-
-```bash
-FINE_TUNE_STABILITY_RUN_TRAINING_SMOKE=1 python3 -m unittest tests.test_training_smoke -v
-```
-
-That smoke now covers both the original vertical slice and a tiny pilot run, including the shared pretrain, one fine-tune seed, and the extremal throughput probe.
-
-## Further Notes
-
-- Methodology details live in [`docs/methodology.md`](docs/methodology.md).
-- Brax integration assumptions and hook points live in [`docs/integration.md`](docs/integration.md).
-- Real pilot operating instructions live in [`docs/pilot_runbook.md`](docs/pilot_runbook.md).
-- After a target-hardware production pilot returns `decision = proceed`, generate the scheduler handoff manifest with:
-
-```bash
-python3 scripts/run_sweep.py \
-  --from-pilot-report results/runs/pilot_gate/pilot_report.json \
-  --output results/sweep_manifest.json
-```
-
-- Generate the representative-cell pretrain-sensitivity manifest separately with:
-
-```bash
-python3 scripts/run_pretrain_sensitivity.py \
-  --from-pilot-report results/runs/pilot_gate/pilot_report.json \
-  --output results/pretrain_sensitivity_manifest.json
-```
-
-- Do not generate any sweep or sensitivity manifest from an outdated pilot report or from a pilot that ended in `adjust` or `fail`.
-
-- Project-specific contributor guidance for agents and maintainers lives in [`AGENTS.md`](AGENTS.md).
+See also [`CITATION.cff`](CITATION.cff).

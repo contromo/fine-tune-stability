@@ -1,0 +1,35 @@
+[
+  {
+    "horizon": 1,
+    "n": 8,
+    "mean_final_return": 0.5310019828362783,
+    "stdev_final_return": 0.5108648609676069,
+    "min_final_return": 0.0078107326946337706,
+    "max_final_return": 1.4596770422533154,
+    "mean_steps_per_second": 116.589629875,
+    "collapsed_count": 0,
+    "warning_count": 0
+  },
+  {
+    "horizon": 3,
+    "n": 4,
+    "mean_final_return": 0.009907276088779327,
+    "stdev_final_return": 0.004269752201880595,
+    "min_final_return": 0.00538144689053297,
+    "max_final_return": 0.015451059152837843,
+    "mean_steps_per_second": 125.2663675,
+    "collapsed_count": 0,
+    "warning_count": 0
+  },
+  {
+    "horizon": 10,
+    "n": 4,
+    "mean_final_return": 0.02294491247921542,
+    "stdev_final_return": 0.004929623502029102,
+    "min_final_return": 0.016914820577949286,
+    "max_final_return": 0.02705550657119602,
+    "mean_steps_per_second": 126.58200175,
+    "collapsed_count": 0,
+    "warning_count": 0
+  }
+]

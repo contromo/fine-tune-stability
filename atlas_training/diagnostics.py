@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
-from atlas.diagnostics import DEFAULT_TRIGGER_THRESHOLD, collapse_horizon_labels, collapse_threshold, roc_auc
+from atlas.diagnostics import (
+    DEFAULT_TRIGGER_HOLD_EVALS,
+    DEFAULT_TRIGGER_THRESHOLD,
+    InstabilityTrigger,
+    collapse_horizon_labels,
+    collapse_threshold,
+    roc_auc,
+)
 
 
 @dataclass(frozen=True)
@@ -37,9 +44,11 @@ class EvalLogRow:
     q95_abs_td: float
     threshold: float
     env_steps: int
+    actor_kl_drift: float | None = None
+    q_magnitude_drift: float | None = None
 
     def to_dict(self) -> Dict[str, float | int | bool | str]:
-        return {
+        row: Dict[str, float | int | bool | str] = {
             "run_id": self.run_id,
             "eval_index": self.eval_index,
             "score": self.score,
@@ -50,6 +59,11 @@ class EvalLogRow:
             "threshold": self.threshold,
             "env_steps": self.env_steps,
         }
+        if self.actor_kl_drift is not None:
+            row["actor_kl_drift"] = self.actor_kl_drift
+        if self.q_magnitude_drift is not None:
+            row["q_magnitude_drift"] = self.q_magnitude_drift
+        return row
 
 
 def freeze_baseline(
@@ -117,6 +131,8 @@ def make_eval_log_row(
     q95_abs_td: float,
     threshold: float,
     env_steps: int,
+    actor_kl_drift: float | None = None,
+    q_magnitude_drift: float | None = None,
 ) -> EvalLogRow:
     return EvalLogRow(
         run_id=run_id,
@@ -128,6 +144,8 @@ def make_eval_log_row(
         q95_abs_td=q95_abs_td,
         threshold=threshold,
         env_steps=env_steps,
+        actor_kl_drift=actor_kl_drift,
+        q_magnitude_drift=q_magnitude_drift,
     )
 
 
@@ -152,20 +170,59 @@ def load_eval_log(path: Path, *, allow_missing: bool = False) -> Dict[str, list[
     return grouped
 
 
-def summarize_eval_groups(grouped_rows: Dict[str, list[dict[str, Any]]], prediction_horizon: int) -> dict[str, Any]:
+def _first_warning_index(scores: Sequence[float], threshold: float, hold_evals: int) -> int | None:
+    trigger = InstabilityTrigger(threshold=threshold, hold_evals=hold_evals)
+    for index, score in enumerate(scores):
+        if trigger.update(float(score)):
+            return index - (hold_evals - 1)
+    return None
+
+
+def summarize_eval_groups(
+    grouped_rows: Dict[str, list[dict[str, Any]]],
+    prediction_horizon: int,
+    *,
+    score_field: str = "score",
+    trigger_threshold: float | None = None,
+    trigger_hold_evals: int = DEFAULT_TRIGGER_HOLD_EVALS,
+) -> dict[str, Any]:
+    """Summarize grouped eval rows into AUC and (optional) lead-time metrics.
+
+    AUC is rank-based and threshold-free — always computed when labels permit.
+    Warning / lead-time metrics require a trigger threshold. For the canonical
+    TD-variance score field, `DEFAULT_TRIGGER_THRESHOLD` is used implicitly.
+    For alt score fields, pass `trigger_threshold` explicitly; otherwise
+    `first_warning_eval` and `lead_time_evals` are `None`.
+    """
+    effective_threshold: float | None
+    if trigger_threshold is not None:
+        effective_threshold = trigger_threshold
+    elif score_field == "score":
+        effective_threshold = DEFAULT_TRIGGER_THRESHOLD
+    else:
+        effective_threshold = None
+
     scores: list[float] = []
     labels: list[int] = []
     lead_times: list[int] = []
     per_run: list[dict[str, Any]] = []
 
     for run_id, rows in sorted(grouped_rows.items()):
-        run_scores = [float(row["score"]) for row in rows]
+        missing = [index for index, row in enumerate(rows) if score_field not in row]
+        if missing:
+            raise ValueError(
+                f"run {run_id}: rows {missing} missing score_field '{score_field}'"
+            )
+        run_scores = [float(row[score_field]) for row in rows]
         collapse_flags = [bool(row["collapsed"]) for row in rows]
         run_labels = collapse_horizon_labels(collapse_flags, prediction_horizon)
         scores.extend(run_scores)
         labels.extend(run_labels)
 
-        warning_index = next((index for index, score in enumerate(run_scores) if score > DEFAULT_TRIGGER_THRESHOLD), None)
+        if effective_threshold is None:
+            warning_index = None
+        else:
+            warning_index = _first_warning_index(run_scores, effective_threshold, trigger_hold_evals)
         collapse_index = next((index for index, flag in enumerate(collapse_flags) if flag), None)
         lead_time = None
         if warning_index is not None and collapse_index is not None and warning_index < collapse_index:
@@ -188,6 +245,9 @@ def summarize_eval_groups(grouped_rows: Dict[str, list[dict[str, Any]]], predict
 
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "score_field": score_field,
+        "trigger_threshold": effective_threshold,
+        "trigger_calibrated": score_field == "score" and trigger_threshold is None,
         "runs": per_run,
         "global_roc_auc": auc,
         "mean_lead_time_evals": (sum(lead_times) / len(lead_times)) if lead_times else None,
@@ -201,8 +261,15 @@ def write_diagnostic_summary(
     *,
     prediction_horizon: int,
     allow_missing: bool = False,
+    score_field: str = "score",
+    trigger_threshold: float | None = None,
 ) -> dict[str, Any]:
-    summary = summarize_eval_groups(load_eval_log(eval_log_path, allow_missing=allow_missing), prediction_horizon)
+    summary = summarize_eval_groups(
+        load_eval_log(eval_log_path, allow_missing=allow_missing),
+        prediction_horizon,
+        score_field=score_field,
+        trigger_threshold=trigger_threshold,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return summary
