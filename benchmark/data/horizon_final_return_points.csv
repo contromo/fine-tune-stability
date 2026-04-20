@@ -1,0 +1,17 @@
+horizon,seed,collapsed,warning_triggered,final_return_mean,final_return_std,steps_per_second,summary_path
+1,0,False,False,0.0078107326946337706,0.012777999093123858,115.926331,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed0/summary.json
+1,1,False,False,0.15861545702791774,0.4720922781880746,114.477563,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed1/summary.json
+1,2,False,False,0.2162327070720494,0.32833885072111846,115.334583,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed2/summary.json
+1,3,False,False,1.4596770422533154,1.8968551189670215,118.014677,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed3/summary.json
+1,4,False,False,0.1183735785773024,0.2377562594021912,115.907739,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed4/summary.json
+1,5,False,False,0.5142449751496315,1.0593989902350602,118.550851,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed5/summary.json
+1,6,False,False,0.7648381255072308,1.3833271121175998,116.635696,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed6/summary.json
+1,7,False,False,1.0082232444081456,1.8781046965269648,117.869599,/Users/manav/Downloads/results/runs/horizon_only_1m/n1_c256_seed7/summary.json
+3,0,False,False,0.015451059152837843,0.018451833570843477,126.677576,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n3_c256_seed0/summary.json
+3,1,False,False,0.010614353424170987,0.01399693886194062,127.5042,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n3_c256_seed1/summary.json
+3,2,False,False,0.008182244887575508,0.009880301681881155,121.640611,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n3_c256_seed2/summary.json
+3,3,False,False,0.00538144689053297,0.009673111496956556,125.243083,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n3_c256_seed3/summary.json
+10,0,False,False,0.016914820577949286,0.011438778501926724,125.904361,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n10_c256_seed0/summary.json
+10,1,False,False,0.02705550657119602,0.018113466224166232,127.904243,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n10_c256_seed1/summary.json
+10,2,False,False,0.020921178891148882,0.014708730654563483,126.249154,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n10_c256_seed2/summary.json
+10,3,False,False,0.02688814387656748,0.03731253509026388,126.270249,/Users/manav/Downloads/results/runs/horizon_confirm_v1/n10_c256_seed3/summary.json

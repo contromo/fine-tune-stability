@@ -1,0 +1,3 @@
+pilot_id,decision,reasons,drop_fraction_mean,drop_fraction_min,drop_fraction_max,threshold_drop_fraction_mean,threshold_drop_fraction_min,threshold_drop_fraction_max,budget_conservative_gpu_hours,budget_optimistic_gpu_hours,global_roc_auc,mean_lead_time_evals,run_count,runs_with_warning,runs_with_collapse
+pilot_gate_1m_v3,adjust,one or more usable seeds exceeded threshold_drop_fraction 0.50,0.342708,0.338453,0.350194,1.943019,1.918034,1.958755,95.977342,118.752126,,,3,0,0
+pilot_gate_1m_v4,adjust,"target drop-fraction band [0.15, 0.50] was not met by at least 2 seeds | one or more usable seeds exceeded threshold_drop_fraction 0.50",0.748634,0.724776,0.783979,0.707691,0.626636,0.823907,96.984913,120.238882,0.2982456140350877,,3,0,3

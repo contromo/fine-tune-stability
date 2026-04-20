@@ -122,6 +122,29 @@ def roc_auc(scores: Sequence[float], labels: Sequence[int]) -> float:
     return (positive_rank_sum - (positive_count * (positive_count + 1) / 2.0)) / (positive_count * negative_count)
 
 
+def gaussian_kl_diagonal(
+    mu_a: Sequence[float],
+    log_std_a: Sequence[float],
+    mu_b: Sequence[float],
+    log_std_b: Sequence[float],
+) -> float:
+    """Closed-form KL(N(mu_a, diag(exp(log_std_a)^2)) || N(mu_b, diag(exp(log_std_b)^2))).
+
+    Parameterized on log-std so callers pass the logarithm directly, avoiding a
+    log() of a near-zero scale. Returns the sum over dimensions (not the mean).
+    """
+    if not (len(mu_a) == len(log_std_a) == len(mu_b) == len(log_std_b)):
+        raise ValueError("all inputs must have equal length")
+    if not mu_a:
+        raise ValueError("inputs must be non-empty")
+    total = 0.0
+    for m_a, ls_a, m_b, ls_b in zip(mu_a, log_std_a, mu_b, log_std_b):
+        var_a = math.exp(2.0 * ls_a)
+        var_b = math.exp(2.0 * ls_b)
+        total += (ls_b - ls_a) + (var_a + (m_a - m_b) ** 2) / (2.0 * var_b) - 0.5
+    return total
+
+
 def pearson_correlation(xs: Sequence[float], ys: Sequence[float]) -> float:
     if len(xs) != len(ys):
         raise ValueError("xs and ys must have equal length")

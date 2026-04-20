@@ -1,0 +1,7 @@
+pilot_id,run_id,evals,first_warning_eval,first_collapse_eval,lead_time_evals
+pilot_gate_1m_v3,finetune_n1_c256_seed0,8,,,
+pilot_gate_1m_v3,finetune_n1_c256_seed1,8,,,
+pilot_gate_1m_v3,finetune_n1_c256_seed2,8,,,
+pilot_gate_1m_v4,finetune_n1_c256_seed0,8,,7,
+pilot_gate_1m_v4,finetune_n1_c256_seed1,6,,5,
+pilot_gate_1m_v4,finetune_n1_c256_seed2,8,,7,

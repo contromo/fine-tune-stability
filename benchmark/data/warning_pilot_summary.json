@@ -1,0 +1,90 @@
+{
+  "pilot_summaries": [
+    {
+      "pilot_id": "pilot_gate_1m_v3",
+      "decision": "adjust",
+      "reasons": "one or more usable seeds exceeded threshold_drop_fraction 0.50",
+      "drop_fraction_mean": 0.342708,
+      "drop_fraction_min": 0.338453,
+      "drop_fraction_max": 0.350194,
+      "threshold_drop_fraction_mean": 1.943019,
+      "threshold_drop_fraction_min": 1.918034,
+      "threshold_drop_fraction_max": 1.958755,
+      "budget_conservative_gpu_hours": 95.977342,
+      "budget_optimistic_gpu_hours": 118.752126,
+      "global_roc_auc": null,
+      "mean_lead_time_evals": null,
+      "run_count": 3,
+      "runs_with_warning": 0,
+      "runs_with_collapse": 0
+    },
+    {
+      "pilot_id": "pilot_gate_1m_v4",
+      "decision": "adjust",
+      "reasons": "target drop-fraction band [0.15, 0.50] was not met by at least 2 seeds | one or more usable seeds exceeded threshold_drop_fraction 0.50",
+      "drop_fraction_mean": 0.748634,
+      "drop_fraction_min": 0.724776,
+      "drop_fraction_max": 0.783979,
+      "threshold_drop_fraction_mean": 0.707691,
+      "threshold_drop_fraction_min": 0.626636,
+      "threshold_drop_fraction_max": 0.823907,
+      "budget_conservative_gpu_hours": 96.984913,
+      "budget_optimistic_gpu_hours": 120.238882,
+      "global_roc_auc": 0.2982456140350877,
+      "mean_lead_time_evals": null,
+      "run_count": 3,
+      "runs_with_warning": 0,
+      "runs_with_collapse": 3
+    }
+  ],
+  "pilot_runs": [
+    {
+      "pilot_id": "pilot_gate_1m_v3",
+      "run_id": "finetune_n1_c256_seed0",
+      "evals": 8,
+      "first_warning_eval": null,
+      "first_collapse_eval": null,
+      "lead_time_evals": null
+    },
+    {
+      "pilot_id": "pilot_gate_1m_v3",
+      "run_id": "finetune_n1_c256_seed1",
+      "evals": 8,
+      "first_warning_eval": null,
+      "first_collapse_eval": null,
+      "lead_time_evals": null
+    },
+    {
+      "pilot_id": "pilot_gate_1m_v3",
+      "run_id": "finetune_n1_c256_seed2",
+      "evals": 8,
+      "first_warning_eval": null,
+      "first_collapse_eval": null,
+      "lead_time_evals": null
+    },
+    {
+      "pilot_id": "pilot_gate_1m_v4",
+      "run_id": "finetune_n1_c256_seed0",
+      "evals": 8,
+      "first_warning_eval": null,
+      "first_collapse_eval": 7,
+      "lead_time_evals": null
+    },
+    {
+      "pilot_id": "pilot_gate_1m_v4",
+      "run_id": "finetune_n1_c256_seed1",
+      "evals": 6,
+      "first_warning_eval": null,
+      "first_collapse_eval": 5,
+      "lead_time_evals": null
+    },
+    {
+      "pilot_id": "pilot_gate_1m_v4",
+      "run_id": "finetune_n1_c256_seed2",
+      "evals": 8,
+      "first_warning_eval": null,
+      "first_collapse_eval": 7,
+      "lead_time_evals": null
+    }
+  ]
+}

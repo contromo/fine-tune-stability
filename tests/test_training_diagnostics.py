@@ -124,5 +124,88 @@ class TrainingDiagnosticsTest(unittest.TestCase):
             self.assertEqual(summary["runs"][0]["run_id"], "run")
 
 
+    def test_eval_log_row_omits_optional_drift_fields_when_none(self) -> None:
+        row = make_eval_log_row(
+            run_id="run",
+            eval_index=0,
+            score=0.1,
+            collapsed=False,
+            return_mean=1.0,
+            variance=2.0,
+            q95_abs_td=3.0,
+            threshold=0.0,
+            env_steps=100,
+        )
+        payload = row.to_dict()
+        self.assertNotIn("actor_kl_drift", payload)
+        self.assertNotIn("q_magnitude_drift", payload)
+
+    def test_eval_log_row_includes_optional_drift_fields_when_set(self) -> None:
+        row = make_eval_log_row(
+            run_id="run",
+            eval_index=0,
+            score=0.1,
+            collapsed=False,
+            return_mean=1.0,
+            variance=2.0,
+            q95_abs_td=3.0,
+            threshold=0.0,
+            env_steps=100,
+            actor_kl_drift=0.25,
+            q_magnitude_drift=-0.1,
+        )
+        payload = row.to_dict()
+        self.assertEqual(payload["actor_kl_drift"], 0.25)
+        self.assertEqual(payload["q_magnitude_drift"], -0.1)
+
+    def test_summarize_eval_groups_with_alt_score_field_auc_only(self) -> None:
+        grouped = {
+            "run_a": [
+                {"run_id": "run_a", "eval_index": 0, "score": 0.0, "collapsed": False, "actor_kl_drift": 0.05},
+                {"run_id": "run_a", "eval_index": 1, "score": 0.0, "collapsed": True, "actor_kl_drift": 0.9},
+            ],
+            "run_b": [
+                {"run_id": "run_b", "eval_index": 0, "score": 0.0, "collapsed": False, "actor_kl_drift": 0.02},
+                {"run_id": "run_b", "eval_index": 1, "score": 0.0, "collapsed": False, "actor_kl_drift": 0.04},
+            ],
+        }
+        summary = summarize_eval_groups(grouped, prediction_horizon=2, score_field="actor_kl_drift")
+        self.assertEqual(summary["score_field"], "actor_kl_drift")
+        self.assertIsNone(summary["trigger_threshold"])
+        self.assertFalse(summary["trigger_calibrated"])
+        self.assertIsNotNone(summary["global_roc_auc"])
+        for run in summary["runs"]:
+            self.assertIsNone(run["first_warning_eval"])
+            self.assertIsNone(run["lead_time_evals"])
+
+    def test_summarize_eval_groups_with_alt_score_field_and_threshold_populates_lead_time(self) -> None:
+        grouped = {
+            "run_a": [
+                {"run_id": "run_a", "eval_index": 0, "score": 0.0, "collapsed": False, "actor_kl_drift": 0.1},
+                {"run_id": "run_a", "eval_index": 1, "score": 0.0, "collapsed": False, "actor_kl_drift": 0.6},
+                {"run_id": "run_a", "eval_index": 2, "score": 0.0, "collapsed": False, "actor_kl_drift": 0.7},
+                {"run_id": "run_a", "eval_index": 3, "score": 0.0, "collapsed": True, "actor_kl_drift": 0.9},
+            ],
+        }
+        summary = summarize_eval_groups(
+            grouped,
+            prediction_horizon=2,
+            score_field="actor_kl_drift",
+            trigger_threshold=0.5,
+        )
+        self.assertEqual(summary["runs"][0]["first_warning_eval"], 1)
+        self.assertEqual(summary["runs"][0]["first_collapse_eval"], 3)
+        self.assertEqual(summary["runs"][0]["lead_time_evals"], 2)
+
+    def test_summarize_eval_groups_raises_on_missing_score_field(self) -> None:
+        grouped = {
+            "run_a": [
+                {"run_id": "run_a", "eval_index": 0, "score": 0.0, "collapsed": False},
+            ],
+        }
+        with self.assertRaises(ValueError):
+            summarize_eval_groups(grouped, prediction_horizon=2, score_field="actor_kl_drift")
+
+
 if __name__ == "__main__":
     unittest.main()
