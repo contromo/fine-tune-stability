@@ -17,6 +17,7 @@ canonical rendered figures. Integrity is checked via `manifest.sha256`.
 | `warning_pilot_summary.json` | Same pilot aggregates in JSON form. |
 | `figure1_horizon_final_return.svg` | Canonical rendered Figure 1 (horizon vs. final return). |
 | `figure2_warning_pilot_summary.svg` | Canonical rendered Figure 2 (warning-signal pilot comparison). |
+| `sample_eval_log.jsonl` | Twelve hand-crafted post-warmup eval rows across two synthetic runs, demonstrating the full `EvalLogRow` schema including `actor_kl_drift` and `q_magnitude_drift`. Feeds the alt-signal demo in `scripts/run_diagnostic.py` without requiring a training run. |
 | `manifest.sha256` | SHA-256 hash of every file above. Run `shasum -a 256 -c manifest.sha256` to verify. |
 
 ## Schemas
@@ -84,6 +85,16 @@ python scripts/run_diagnostic.py \
     --score-field actor_kl_drift \
     --trigger-threshold 0.5 \
     --output results/diag_actor_kl.json
+```
+
+**Demo against the vendored sample log (no training required):**
+
+```
+python scripts/run_diagnostic.py \
+    --eval-log benchmark/data/sample_eval_log.jsonl \
+    --score-field actor_kl_drift \
+    --trigger-threshold 0.5 \
+    --output /tmp/sample_diag.json
 ```
 
 ## Extending the benchmark

@@ -192,7 +192,7 @@ FINE_TUNE_STABILITY_RUN_TRAINING_SMOKE=1 \                  # gated heavy smoke
   title = {fine-tune-stability: A Benchmark for Warning-Signal Evaluation under
            Dynamics Shift},
   year = {2026},
-  url = {https://github.com/manavm0/fine-tune-stability}
+  url = {https://github.com/contromo/fine-tune-stability}
 }
 ```
 
